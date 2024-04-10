@@ -1,4 +1,4 @@
-name: Release to Cargo
+name: Publish to Cargo
 
 on:
   push:
@@ -6,10 +6,11 @@ on:
       - release
 
 jobs:
-  build-and-publish:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -17,11 +18,7 @@ jobs:
           default: true
           profile: minimal
           override: true
-      - name: Build Release
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release
+
       - name: Publish to Cargo
         uses: actions-rs/cargo@v1
         with:
