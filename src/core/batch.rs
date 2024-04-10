@@ -128,13 +128,51 @@ pub async fn batch(
                     }
                 }
             }
+            // 将header替换
+            headers.iter_mut().for_each(|(_key, value)|{
+                let handlebars = Handlebars::new();
+                let new_val = match handlebars.render_template(value.to_str().unwrap(), &json!(extract_map)){
+                    Ok(v) => {
+                        let header_value = v.parse::<HeaderValue>().expect("无效的header值");
+                        header_value
+                    }
+                    Err(e) => {
+                        eprintln!("{:?}", e);
+                        value.clone()
+                    }
+                };
+                *value = new_val;
+            });
             request = request.headers(headers);
             // 构建json请求
             if let Some(json_value) = option.json{
-                request = request.json(&json_value);
+                let handlebars = Handlebars::new();
+                let json_string = match handlebars.render_template(&*json_value.to_string(), &json!(extract_map)){
+                    Ok(j) => {
+                        j
+                    }
+                    Err(e) => {
+                        eprintln!("{:?}", e);
+                        json_value.to_string()
+                    }
+                };
+                request = request.json(&json!(json_string));
             }
             // 构建form表单
-            if let Some(form_data) = option.form_data{
+            if let Some(mut form_data) = option.form_data{
+                form_data.iter_mut().for_each(|(_key, value)|{
+                    let handlebars = Handlebars::new();
+                    let new_val = match handlebars.render_template(value, &json!(extract_map)){
+                        Ok(v) => {
+                            v
+                        }
+                        Err(e) => {
+                            eprintln!("{:?}", e);
+                            value.to_string()
+                        }
+                    };
+                    *value = new_val;
+                });
                 request = request.form(&form_data);
             };
             // 发送请求
@@ -433,7 +471,7 @@ pub async fn batch(
                                 json!(json_string)
                             }
                             false => {
-                                json!(json_value)
+                                json_value
                             }
                         };
                         if verbose{
