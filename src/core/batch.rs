@@ -1,29 +1,31 @@
+use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
-use histogram::Histogram;
 use std::time::{Duration, Instant};
-use anyhow::{Context, Error};
-use reqwest::{Client, Method, StatusCode};
-use tokio::sync::Mutex;
-use reqwest::header::{COOKIE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
-use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
-use jsonpath_lib::select;
-use tokio::time::interval;
-use std::env;
-use futures::stream::StreamExt;
+use anyhow::{Context, Error};
 use futures::future::join_all;
+use futures::stream::StreamExt;
+use histogram::Histogram;
+use jsonpath_lib::select;
+use reqwest::{Client, Method, StatusCode};
+use reqwest::header::{COOKIE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
+use serde_json::{json, Value};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-
+use tokio::time::interval;
+use handlebars::{Handlebars};
+use std::collections::BTreeMap;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
+use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
-use crate::models::api_endpoint::ApiEndpoint;
+use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::{InnerStepOption, StepOption};
 
 pub async fn batch(
@@ -32,7 +34,8 @@ pub async fn batch(
     verbose: bool,
     should_prevent: bool,
     api_endpoints: Vec<ApiEndpoint>,
-    step_option: Option<StepOption>
+    step_option: Option<StepOption>,
+    setup_options: Option<Vec<SetupApiEndpoint>>
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -86,6 +89,120 @@ pub async fn batch(
         "{} {} ({}; {})",
         app_name, app_version, os_type, os_version
     );
+    let mut is_need_render_template = false;
+    // 全局提取字典
+    let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
+    // 开始初始化
+    if let Some(setup_options) = setup_options{
+        is_need_render_template = true;
+        for option in setup_options{
+            let builder = Client::builder();
+            // 如果有超时时间就将client设置
+            let client = if option.timeout_secs > 0 {
+                builder.timeout(Duration::from_secs(option.timeout_secs)).build().context("构建带超时的http客户端失败")?
+            } else {
+                builder.build().context("构建http客户端失败")?
+            };
+            // 构建请求方式
+            let method = Method::from_str(&option.method.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
+            // 构建请求
+            let mut request = client.request(method, option.url);
+            // 构建请求头
+            let mut headers = HeaderMap::new();
+            headers.insert(USER_AGENT, user_agent_value.parse()?);
+            if let Some(headers_map) = option.headers {
+                headers.extend(headers_map.iter().map(|(k, v)| {
+                    let header_name = k.parse::<HeaderName>().expect("无效的header名称");
+                    let header_value = v.parse::<HeaderValue>().expect("无效的header值");
+                    (header_name, header_value)
+                }));
+            }
+            // 构建cookies
+            if let Some(ref c) = option.cookies{
+                match HeaderValue::from_str(c){
+                    Ok(h) => {
+                        headers.insert(COOKIE, h);
+                    },
+                    Err(e) =>{
+                        return Err(Error::msg(format!("设置cookie失败:{:?}", e)))
+                    }
+                }
+            }
+            request = request.headers(headers);
+            // 构建json请求
+            if let Some(json_value) = option.json{
+                request = request.json(&json_value);
+            }
+            // 构建form表单
+            if let Some(form_data) = option.form_data{
+                request = request.form(&form_data);
+            };
+            // 发送请求
+            match request.send().await{
+                Ok(response) => {
+                    // 需要通过jsonpath提取数据
+                    if let Some(json_path_vec) = option.jsonpath_extract{
+                        // 响应流
+                        let mut stream = response.bytes_stream();
+                        // 响应体
+                        let mut body_bytes = Vec::new();
+                        while let Some(item) = stream.next().await {
+                            match item{
+                                Ok(chunk) => {
+                                    // 获取当前的chunk
+                                    body_bytes.extend_from_slice(&chunk);
+                                }
+                                Err(e) => {
+                                    Err(Error::msg(format!("获取响应流失败:{:?}", e)))
+                                }?
+                            };
+                        }
+                        for jsonpath_obj in json_path_vec{
+                            let jsonpath = jsonpath_obj.jsonpath;
+                            let key = jsonpath_obj.key;
+                            // 将响应转换为json
+                            let json_value: Value = match serde_json::from_slice(&*body_bytes) {
+                                Err(e) =>{
+                                    return Err(Error::msg(format!("转换json失败:{:?}", e)))
+                                }
+                                Ok(val) => {
+                                    val
+                                }
+                            };
+                            // 通过jsonpath提取数据
+                            match select(&json_value,&jsonpath) {
+                                Ok(results) => {
+                                    if results.is_empty(){
+                                        return Err(Error::msg("初始化失败::jsonpath没有匹配到任何值"))
+                                    }
+                                    if results.len() > 1{
+                                        return Err(Error::msg("初始化失败::jsonpath匹配的不是唯一值"))
+                                    }
+                                    // 取出匹配到的唯一值
+                                    if let Some(result) = results.get(0).map(|&v|v) {
+                                        // 检查key是否冲突
+                                        if extract_map.contains_key(&key){
+                                            return Err(Error::msg(format!("初始化失败::key {:?}冲突",key)))
+                                        }
+                                        // 将key设置到字典中
+                                        extract_map.insert(key.clone(), result.clone());
+                                    }
+                                },
+                                Err(e) => {
+                                    return Err(Error::msg(format!("jsonpath提取数据失败::{:?}", e)))
+                                },
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    return Err(Error::msg(format!("初始化失败:{:?}", err)));
+                }
+            }
+        }
+    }
+    // 并发安全的提取字典
+    let extract_map_arc = Arc::new(Mutex::new(extract_map));
     // 针对每一个接口开始配置
     for (index, endpoint_arc) in api_endpoints_arc.clone().into_iter().enumerate() {
         let endpoint = endpoint_arc.lock().await;
@@ -131,7 +248,16 @@ pub async fn batch(
             Some(option) => {
                 // 计算每个接口的步长
                 let step = option.increase_step as f64 * weight_ratio;
-                Arc::new(ConcurrencyController::new(concurrency_for_endpoint, Option::from(InnerStepOption { increase_step: step, increase_interval: option.increase_interval })))
+                Arc::new(
+                    ConcurrencyController::new(
+                        concurrency_for_endpoint, Option::from(
+                            InnerStepOption {
+                                increase_step: step,
+                                increase_interval: option.increase_interval
+                            }
+                        )
+                    )
+                )
             }
         };
         // 后台启动并发控制器
@@ -192,11 +318,15 @@ pub async fn batch(
             let client_builder = Client::builder();
             // 如果有超时时间就将client设置
             let client = if endpoint_clone.lock().await.timeout_secs > 0 {
-                client_builder.timeout(Duration::from_secs(endpoint_clone.lock().await.timeout_secs)).build().context("构建带超时的http客户端失败")?
+                client_builder.
+                    timeout(Duration::from_secs(endpoint_clone.lock().await.timeout_secs)).build().context("构建带超时的http客户端失败")?
             } else {
                 client_builder.build().context("构建http客户端失败")?
             };
+            // 并发控制器副本
             let controller_clone = controller.clone();
+            // 全局提取字典副本
+            let extract_map_arc_clone = Arc::clone(&extract_map_arc);
             // 开启并发
             let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 let semaphore = controller_clone.get_semaphore();
@@ -225,19 +355,57 @@ pub async fn batch(
                     let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
                     // 构建请求
                     let mut request = client.request(method, endpoint_clone.lock().await.url.clone());
+                    // 提取器b树 map副本
+                    let extract_b_tree_map_clone = &extract_map_arc_clone.lock().await.clone();
                     // 构建请求头
                     let mut headers = HeaderMap::new();
                     headers.insert(USER_AGENT, user_agent_clone.parse()?);
                     if let Some(headers_map) = headers_clone {
                         headers.extend(headers_map.iter().map(|(k, v)| {
                             let header_name = k.parse::<HeaderName>().expect("无效的header名称");
-                            let header_value = v.parse::<HeaderValue>().expect("无效的header值");
-                            (header_name, header_value)
-                        }));
+                            if is_need_render_template{
+                                // 将header的value模板进行填充
+                                let handlebars = Handlebars::new();
+                                let new_val = match handlebars.render_template(v, &json!(extract_b_tree_map_clone)){
+                                    Ok(v) => {
+                                        v
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        v.to_string()
+                                    }
+                                };
+                                let header_value = new_val.parse::<HeaderValue>().expect("无效的header值");
+                                (header_name.clone(), header_value)
+                            } else {
+                                let header_value = v.parse::<HeaderValue>().expect("无效的header值");
+                                (header_name, header_value)
+                            }
+                        }
+                        ));
                     }
                     // 构建cookies
-                    if let Some(ref c) = cookie_clone{
-                        match HeaderValue::from_str(c){
+                    if let Some(ref source) = cookie_clone{
+                        let cookie_val = match is_need_render_template{
+                            true => {
+                                // 使用模版替换cookies
+                                let handlebars = Handlebars::new();
+                                match handlebars.render_template(source, &json!(extract_b_tree_map_clone)){
+                                    Ok(c) => {
+                                        c
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        source.to_string()
+                                    }
+                                }
+                            }
+                            false => {
+                                source.to_string()
+                            }
+                        };
+                        // println!("{:?}", cookie_val);
+                        match HeaderValue::from_str(&cookie_val){
                             Ok(h) => {
                                 headers.insert(COOKIE, h);
                             },
@@ -249,11 +417,52 @@ pub async fn batch(
                     request = request.headers(headers);
                     // 构建json请求
                     if let Some(json_value) = json_obj_clone{
-                        request = request.json(&json_value);
+                        let json_val = match is_need_render_template {
+                            true => {
+                                // 将json转为字符串，并且将模版填充
+                                let handlebars = Handlebars::new();
+                                let json_string = match handlebars.render_template(&*json_value.to_string(), &json!(extract_b_tree_map_clone)){
+                                    Ok(j) => {
+                                        j
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        json_value.to_string()
+                                    }
+                                };
+                                json!(json_string)
+                            }
+                            false => {
+                                json!(json_value)
+                            }
+                        };
+                        if verbose{
+                            println!("json:{:?}", json_val);
+                        };
+                        request = request.json(&json_val);
                     }
                     // 构建form表单
-                    if let Some(form_data) = form_data_clone{
+                    if let Some(mut form_data) = form_data_clone{
+                        if is_need_render_template {
+                            // 将模版填充
+                            form_data.iter_mut().for_each(|(_key, value)|{
+                                let handlebars = Handlebars::new();
+                                let new_val = match handlebars.render_template(value, &json!(extract_b_tree_map_clone)){
+                                    Ok(v) => {
+                                        v
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        value.to_string()
+                                    }
+                                };
+                                *value = new_val;
+                            })
+                        };
                         request = request.form(&form_data);
+                    };
+                    if verbose{
+                        println!("{:?}", request);
                     };
                     // 记录开始时间
                     let start = Instant::now();
@@ -340,87 +549,89 @@ pub async fn batch(
                                     let mut assertion_failed = false;
                                     // 断言
                                     if let Some(assert_options) = assert_options_clone{
+                                        let json_value: Option<Value> = match serde_json::from_slice(&*body_bytes) {
+                                            Err(e) =>{
+                                                if verbose{
+                                                    eprintln!("JSONPath 查询失败: {}", e);
+                                                };
+                                                *err_count_clone.lock().await += 1;
+                                                *api_err_count_clone.lock().await += 1;
+                                                assertion_failed = true;
+                                                assert_errors_clone.lock().await.increment(
+                                                    String::from(endpoint_clone.lock().await.url.clone()),
+                                                    format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, e)).await;
+                                                None
+                                            }
+                                            Ok(val) => {
+                                                Some(val)
+                                            }
+                                        };
                                         // 多断言
                                         for assert_option in assert_options {
                                             if body_bytes.len() == 0{
                                                 eprintln!("无法获取到结构体，不进行断言");
                                                 break
                                             }
-                                            let json_value: Value = match serde_json::from_slice(&*body_bytes) {
-                                                Err(e) =>{
-                                                    if verbose{
-                                                        eprintln!("JSONPath 查询失败: {}", e);
-                                                    };
-                                                    *err_count_clone.lock().await += 1;
-                                                    *api_err_count_clone.lock().await += 1;
-                                                    assert_errors_clone.lock().await.increment(
-                                                        String::from(endpoint_clone.lock().await.url.clone()),
-                                                        format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, e)).await;
-                                                    assertion_failed = true;
-                                                    break;
-                                                }
-                                                Ok(val) => {
-                                                    val
-                                                }
-                                            };
                                             // 通过jsonpath提取数据
-                                            match select(&json_value, &*assert_option.jsonpath) {
-                                                Ok(results) => {
-                                                    if results.is_empty(){
-                                                        if verbose{
-                                                            eprintln!("没有匹配到任何结果");
-                                                        }
-                                                        *err_count_clone.lock().await += 1;
-                                                        *api_err_count_clone.lock().await += 1;
-                                                        assert_errors_clone.lock().await.increment(
-                                                            String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "没有匹配到任何结果")).await;
-                                                        assertion_failed = true;
-                                                        break;
-                                                    }
-                                                    if results.len() >1{
-                                                        if verbose{
-                                                            eprintln!("匹配到多个值，无法进行断言");
-                                                        }
-                                                        *err_count_clone.lock().await += 1;
-                                                        *api_err_count_clone.lock().await += 1;
-                                                        assert_errors_clone.lock().await.increment(
-                                                            String::from(endpoint_clone.lock().await.url.clone()),
-                                                            format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "匹配到多个值，无法进行断言")).await;
-                                                        assertion_failed = true;
-                                                        break;
-                                                    }
-                                                    // 取出匹配到的唯一值
-                                                    if let Some(result) = results.get(0).map(|&v|v) {
-                                                        if *result != assert_option.reference_object{
-                                                            // 将失败情况加入到一个容器中
-                                                            assert_errors_clone.
-                                                                lock().
-                                                                await.
-                                                                increment(
-                                                                    String::from(endpoint_clone.lock().await.url.clone()),
-                                                                    format!(
-                                                                        "{:?}-预期结果：{:?}, 实际结果：{:?}", api_name_clone, assert_option.reference_object, result
-                                                                    )
-                                                                ).await;
+                                            if let Some(json_val) = json_value.clone(){
+                                                match select(&json_val, &*assert_option.jsonpath) {
+                                                    Ok(results) => {
+                                                        if results.is_empty(){
                                                             if verbose{
-                                                                eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result)
+                                                                eprintln!("没有匹配到任何结果");
                                                             }
-                                                            // 错误数据增加
                                                             *err_count_clone.lock().await += 1;
                                                             *api_err_count_clone.lock().await += 1;
-                                                            // 退出断言
+                                                            assert_errors_clone.lock().await.increment(
+                                                                String::from(endpoint_clone.lock().await.url.clone()),
+                                                                format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "没有匹配到任何结果")).await;
                                                             assertion_failed = true;
                                                             break;
                                                         }
-                                                    }
-                                                },
-                                                Err(e) => {
-                                                    eprintln!("JSONPath 查询失败: {}", e);
-                                                    assertion_failed = true;
-                                                    break;
-                                                },
-                                            }
+                                                        if results.len() > 1{
+                                                            if verbose{
+                                                                eprintln!("匹配到多个值，无法进行断言");
+                                                            }
+                                                            *err_count_clone.lock().await += 1;
+                                                            *api_err_count_clone.lock().await += 1;
+                                                            assert_errors_clone.lock().await.increment(
+                                                                String::from(endpoint_clone.lock().await.url.clone()),
+                                                                format!("{:?}-JSONPath查询失败:{:?}", api_name_clone, "匹配到多个值，无法进行断言")).await;
+                                                            assertion_failed = true;
+                                                            break;
+                                                        }
+                                                        // 取出匹配到的唯一值
+                                                        if let Some(result) = results.get(0).map(|&v|v) {
+                                                            if *result != assert_option.reference_object{
+                                                                // 将失败情况加入到一个容器中
+                                                                assert_errors_clone.
+                                                                    lock().
+                                                                    await.
+                                                                    increment(
+                                                                        String::from(endpoint_clone.lock().await.url.clone()),
+                                                                        format!(
+                                                                            "{:?}-预期结果：{:?}, 实际结果：{:?}", api_name_clone, assert_option.reference_object, result
+                                                                        )
+                                                                    ).await;
+                                                                if verbose{
+                                                                    eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",api_name_clone ,assert_option.reference_object, result)
+                                                                }
+                                                                // 错误数据增加
+                                                                *err_count_clone.lock().await += 1;
+                                                                *api_err_count_clone.lock().await += 1;
+                                                                // 退出断言
+                                                                assertion_failed = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                    },
+                                                    Err(e) => {
+                                                        eprintln!("JSONPath 查询失败: {}", e);
+                                                        assertion_failed = true;
+                                                        break;
+                                                    },
+                                                }
+                                            };
                                         }
                                     }
                                     if !assertion_failed{
@@ -663,9 +874,11 @@ pub async fn batch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use core::option::Option;
     use crate::models::assert_option::AssertOption;
+    use crate::models::setup::JsonpathExtract;
 
+    use super::*;
 
     #[tokio::test]
     async fn test_batch() {
@@ -674,31 +887,31 @@ mod tests {
         assert_vec.push(AssertOption{ jsonpath: "$.code".to_string(), reference_object: ref_obj });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        endpoints.push(ApiEndpoint{
-            name: "有断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 10,
-            weight: 1,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: Some(assert_vec.clone()),
-        });
-        //
-        endpoints.push(ApiEndpoint{
-            name: "无断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 10,
-            weight: 3,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: None,
-        });
+        // endpoints.push(ApiEndpoint{
+        //     name: "有断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 1,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: Some(assert_vec.clone()),
+        // });
+        // //
+        // endpoints.push(ApiEndpoint{
+        //     name: "无断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 3,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: None,
+        // });
 
         // endpoints.push(ApiEndpoint{
         //     name: "test-1".to_string(),
@@ -712,8 +925,54 @@ mod tests {
         //     form_data:None,
         //     assert_options: None,
         // });
-
-        match batch(20, 100, true, true, endpoints, Option::from(StepOption { increase_step: 5, increase_interval: 2 })).await {
+        let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();
+        jsonpath_extracts.push(JsonpathExtract{ key: "test-code".to_string(), jsonpath: "$.code".to_string() });
+        jsonpath_extracts.push(JsonpathExtract{ key: "test-msg".to_string(), jsonpath: "$.msg".to_string() });
+        let mut setup:Vec<SetupApiEndpoint> = Vec::new();
+        setup.push(SetupApiEndpoint{
+            name: "初始化-1".to_string(),
+            url: "https://ooooo.run/api/short/v1/list".to_string(),
+            method: "get".to_string(),
+            timeout_secs: 10,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: None,
+            jsonpath_extract: Some(jsonpath_extracts),
+        });
+        endpoints.push(ApiEndpoint{
+            name: "无断言1".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 10,
+            weight: 3,
+            json: Some(json!("{code: 400, data: null, msg: \"没有做替换的\", success: false}")),
+            form_data: None,
+            headers: None,
+            cookies: Some("bbbbb".to_string()),
+            assert_options: None,
+        });
+        endpoints.push(ApiEndpoint{
+            name: "无断言2".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "GET".to_string(),
+            timeout_secs: 10,
+            weight: 3,
+            json: Some(json!("{code: {{test-code}}, data: {{test-msg}}, msg: \"做替换了的\", success: false}")),
+            form_data: None,
+            headers: None,
+            cookies: Some("aaaaa-{{test}}".to_string()),
+            assert_options: None,
+        });
+        match batch(
+            5,
+            100,
+            false,
+            true,
+            endpoints,
+            Option::from(StepOption { increase_step: 5, increase_interval: 2 }),
+            Option::from(setup),
+        ).await {
             Ok(r) => {
                 println!("{:#?}", r)
             }
