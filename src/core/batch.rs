@@ -89,10 +89,12 @@ pub async fn batch(
         "{} {} ({}; {})",
         app_name, app_version, os_type, os_version
     );
+    let mut is_need_render_template = false;
     // 全局提取字典
     let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
     // 开始初始化
     if let Some(setup_options) = setup_options{
+        is_need_render_template = true;
         for option in setup_options{
             let builder = Client::builder();
             // 如果有超时时间就将client设置
@@ -361,36 +363,49 @@ pub async fn batch(
                     if let Some(headers_map) = headers_clone {
                         headers.extend(headers_map.iter().map(|(k, v)| {
                             let header_name = k.parse::<HeaderName>().expect("无效的header名称");
-                            // 将header的value模板进行填充
-                            let handlebars = Handlebars::new();
-                            let new_val = match handlebars.render_template(v, &json!(extract_b_tree_map_clone)){
-                                Ok(v) => {
-                                    v
-                                }
-                                Err(e) => {
-                                    eprintln!("{:?}", e);
-                                    v.to_string()
-                                }
-                            };
-                            let header_value = new_val.parse::<HeaderValue>().expect("无效的header值");
-                            (header_name, header_value)
-                        }));
+                            if is_need_render_template{
+                                // 将header的value模板进行填充
+                                let handlebars = Handlebars::new();
+                                let new_val = match handlebars.render_template(v, &json!(extract_b_tree_map_clone)){
+                                    Ok(v) => {
+                                        v
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        v.to_string()
+                                    }
+                                };
+                                let header_value = new_val.parse::<HeaderValue>().expect("无效的header值");
+                                (header_name.clone(), header_value)
+                            } else {
+                                let header_value = v.parse::<HeaderValue>().expect("无效的header值");
+                                (header_name, header_value)
+                            }
+                        }
+                        ));
                     }
                     // 构建cookies
                     if let Some(ref source) = cookie_clone{
-                        // 使用模版替换cookies
-                        let handlebars = Handlebars::new();
-                        let new_cookies = match handlebars.render_template(source, &json!(extract_b_tree_map_clone)){
-                            Ok(c) => {
-                                c
+                        let cookie_val = match is_need_render_template{
+                            true => {
+                                // 使用模版替换cookies
+                                let handlebars = Handlebars::new();
+                                match handlebars.render_template(source, &json!(extract_b_tree_map_clone)){
+                                    Ok(c) => {
+                                        c
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        source.to_string()
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                eprintln!("{:?}", e);
+                            false => {
                                 source.to_string()
                             }
                         };
-                        // 将cookies塞进header
-                        match HeaderValue::from_str(&new_cookies){
+                        // println!("{:?}", cookie_val);
+                        match HeaderValue::from_str(&cookie_val){
                             Ok(h) => {
                                 headers.insert(COOKIE, h);
                             },
@@ -399,39 +414,55 @@ pub async fn batch(
                             }
                         }
                     }
-
                     request = request.headers(headers);
                     // 构建json请求
                     if let Some(json_value) = json_obj_clone{
-                        // 将json转为字符串，并且将模版填充
-                        let handlebars = Handlebars::new();
-                        let json_string = match handlebars.render_template(&*json_value.to_string(), &json!(extract_b_tree_map_clone)){
-                            Ok(j) => {
-                                j
+                        let json_val = match is_need_render_template {
+                            true => {
+                                // 将json转为字符串，并且将模版填充
+                                let handlebars = Handlebars::new();
+                                let json_string = match handlebars.render_template(&*json_value.to_string(), &json!(extract_b_tree_map_clone)){
+                                    Ok(j) => {
+                                        j
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        json_value.to_string()
+                                    }
+                                };
+                                json!(json_string)
                             }
-                            Err(e) => {
-                                eprintln!("{:?}", e);
-                                json_value.to_string()
+                            false => {
+                                json!(json_value)
                             }
                         };
-                        request = request.json(&json!(json_string));
+                        if verbose{
+                            println!("json:{:?}", json_val);
+                        };
+                        request = request.json(&json_val);
                     }
                     // 构建form表单
                     if let Some(mut form_data) = form_data_clone{
-                        form_data.iter_mut().for_each(|(_key, value)|{
-                            let handlebars = Handlebars::new();
-                            let new_val = match handlebars.render_template(value, &json!(extract_b_tree_map_clone)){
-                                Ok(v) => {
-                                    v
-                                }
-                                Err(e) => {
-                                    eprintln!("{:?}", e);
-                                    value.to_string()
-                                }
-                            };
-                            *value = new_val;
-                        });
+                        if is_need_render_template {
+                            // 将模版填充
+                            form_data.iter_mut().for_each(|(_key, value)|{
+                                let handlebars = Handlebars::new();
+                                let new_val = match handlebars.render_template(value, &json!(extract_b_tree_map_clone)){
+                                    Ok(v) => {
+                                        v
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{:?}", e);
+                                        value.to_string()
+                                    }
+                                };
+                                *value = new_val;
+                            })
+                        };
                         request = request.form(&form_data);
+                    };
+                    if verbose{
+                        println!("{:?}", request);
                     };
                     // 记录开始时间
                     let start = Instant::now();
@@ -895,7 +926,8 @@ mod tests {
         //     assert_options: None,
         // });
         let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();
-        jsonpath_extracts.push(JsonpathExtract{ key: "test".to_string(), jsonpath: "$.code".to_string() });
+        jsonpath_extracts.push(JsonpathExtract{ key: "test-code".to_string(), jsonpath: "$.code".to_string() });
+        jsonpath_extracts.push(JsonpathExtract{ key: "test-msg".to_string(), jsonpath: "$.msg".to_string() });
         let mut setup:Vec<SetupApiEndpoint> = Vec::new();
         setup.push(SetupApiEndpoint{
             name: "初始化-1".to_string(),
@@ -914,7 +946,7 @@ mod tests {
             method: "GET".to_string(),
             timeout_secs: 10,
             weight: 3,
-            json: None,
+            json: Some(json!("{code: 400, data: null, msg: \"没有做替换的\", success: false}")),
             form_data: None,
             headers: None,
             cookies: Some("bbbbb".to_string()),
@@ -926,7 +958,7 @@ mod tests {
             method: "GET".to_string(),
             timeout_secs: 10,
             weight: 3,
-            json: None,
+            json: Some(json!("{code: {{test-code}}, data: {{test-msg}}, msg: \"做替换了的\", success: false}")),
             form_data: None,
             headers: None,
             cookies: Some("aaaaa-{{test}}".to_string()),
