@@ -156,6 +156,7 @@ pub async fn batch(
                         json_value.to_string()
                     }
                 };
+                println!("{:?}",json_string);
                 request = request.json(&json!(json_string));
             }
             // 构建form表单
@@ -1084,22 +1085,22 @@ mod tests {
             cookies: None,
             jsonpath_extract: Some(jsonpath_extracts),
         });
-        endpoints.push(ApiEndpoint{
-            name: "无断言1".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 10,
-            weight: 3,
-            json: Some(json!("{code: 400, data: null, msg: \"没有做替换的\", success: false}")),
-            form_data: None,
-            headers: None,
-            cookies: Some("bbbbb".to_string()),
-            assert_options: None,
-        });
+        // endpoints.push(ApiEndpoint{
+        //     name: "无断言1".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 3,
+        //     json: Some(json!("{code: 400, data: null, msg: \"没有做替换的\", success: false}")),
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: Some("bbbbb".to_string()),
+        //     assert_options: None,
+        // });
         endpoints.push(ApiEndpoint{
             name: "无断言2".to_string(),
             url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
+            method: "POST".to_string(),
             timeout_secs: 10,
             weight: 3,
             json: Some(json!("{code: {{test-code}}, data: {{test-msg}}, msg: \"做替换了的\", success: false}")),
