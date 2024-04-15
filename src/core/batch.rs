@@ -556,6 +556,19 @@ pub async fn batch(
                                     if let Err(e) = api_histogram.increment(duration){
                                         eprintln!("api histogram设置错误:{:?}", e)
                                     }
+                                    // 获取响应头
+                                    let resp_headers = response.headers();
+                                    // 计算响应头大小
+                                    let headers_size = resp_headers.iter().fold(0, |acc, (name, value)| {
+                                        acc + name.as_str().len() + 2 + value.as_bytes().len() + 2
+                                    });
+                                    // 将响应头的大小加入到总大小中
+                                    {
+                                        let mut total_size = total_response_size_clone.lock().await;
+                                        *total_size += headers_size as u64;
+                                        let mut api_total_size = api_total_response_size_clone.lock().await;
+                                        *api_total_size += headers_size as u64;
+                                    }
                                     // 响应流
                                     let mut stream = response.bytes_stream();
                                     // 响应体
