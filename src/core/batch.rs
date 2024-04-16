@@ -156,7 +156,14 @@ pub async fn batch(
                         json_value.to_string()
                     }
                 };
-                request = request.json(&json!(json_string));
+                // println!("{:?}",json_string);
+                let json_val = match Value::from_str(&*json_string){
+                    Ok(val) => val,
+                    Err(e) => {
+                        return Err(Error::msg(format!("转换json失败:{:?}", e)))
+                    }
+                };
+                request = request.json(&json_val);
             }
             // 构建form表单
             if let Some(mut form_data) = option.form_data{
@@ -468,12 +475,20 @@ pub async fn batch(
                                         json_value.to_string()
                                     }
                                 };
-                                json!(json_string)
+                                match Value::from_str(&*json_string){
+                                    Ok(val) => {
+                                        val
+                                    }
+                                    Err(e) => {
+                                        return Err(Error::msg(format!("转换json失败:{:?}", e)))
+                                    }
+                                }
                             }
                             false => {
                                 json_value
                             }
                         };
+                        // println!("{:?}", json_val);
                         if verbose{
                             println!("json:{:?}", json_val);
                         };
@@ -502,6 +517,7 @@ pub async fn batch(
                     if verbose{
                         println!("{:?}", request);
                     };
+                    // println!("{:?}", request);
                     // 记录开始时间
                     let start = Instant::now();
                     // 发送请求
@@ -733,6 +749,99 @@ pub async fn batch(
                                     http_errors_clone.lock().await.increment(status_code, err_msg, url).await;
                                     if verbose{
                                         println!("{:?}-HTTP 错误: 状态码 {:?}",api_name_clone, status_code)
+                                    }
+                                    let mut api_histogram = api_histogram_clone.lock().await;
+                                    // 响应时间
+                                    let duration = start.elapsed().as_millis() as u64;
+                                    // 最大请求时间
+                                    let mut max_rt = max_response_time_clone.lock().await;
+                                    *max_rt = (*max_rt).max(duration);
+                                    // api最大请求时间
+                                    let mut api_max_rt = api_max_response_time_clone.lock().await;
+                                    *api_max_rt = (*api_max_rt).max(duration);
+                                    // 最小响应时间
+                                    let mut min_rt = min_response_time_clone.lock().await;
+                                    *min_rt = (*min_rt).min(duration);
+                                    // api最小响应时间
+                                    let mut api_min_rt = api_min_response_time_clone.lock().await;
+                                    *api_min_rt = (*api_min_rt).min(duration);
+                                    // 将数据放入全局统计桶
+                                    if let Err(e) = histogram_clone.lock().await.increment(duration){
+                                        eprintln!("histogram设置数据错误:{:?}", e)
+                                    };
+                                    // 将数据放入api统计桶
+                                    if let Err(e) = api_histogram.increment(duration){
+                                        eprintln!("api histogram设置错误:{:?}", e)
+                                    }
+                                    // 获取响应头
+                                    let resp_headers = response.headers();
+                                    // 计算响应头大小
+                                    let headers_size = resp_headers.iter().fold(0, |acc, (name, value)| {
+                                        acc + name.as_str().len() + 2 + value.as_bytes().len() + 2
+                                    });
+                                    // 将响应头的大小加入到总大小中
+                                    {
+                                        let mut total_size = total_response_size_clone.lock().await;
+                                        *total_size += headers_size as u64;
+                                        let mut api_total_size = api_total_response_size_clone.lock().await;
+                                        *api_total_size += headers_size as u64;
+                                    }
+                                    // 响应流
+                                    let mut stream = response.bytes_stream();
+                                    // 响应体
+                                    let mut body_bytes = Vec::new();
+                                    while let Some(item) = stream.next().await {
+                                        match item{
+                                            Ok(chunk) => {
+                                                // 获取当前的chunk
+                                                let mut total_size = total_response_size_clone.lock().await;
+                                                *total_size += chunk.len() as u64;
+                                                let mut api_total_size = api_total_response_size_clone.lock().await;
+                                                *api_total_size += chunk.len() as u64;
+                                                body_bytes.extend_from_slice(&chunk);
+                                            }
+                                            Err(e) => {
+                                                *api_err_count_clone.lock().await += 1;
+                                                *err_count_clone.lock().await += 1;
+                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e), endpoint_clone.lock().await.url.clone()).await;
+                                                break
+                                            }
+                                        };
+                                    }
+                                    if verbose {
+                                        let body_bytes_clone = body_bytes.clone();
+                                        let buffer = String::from_utf8(body_bytes_clone).expect("无法转换响应体为字符串");
+                                        println!("{:+?}", buffer);
+                                    }
+                                    let api_total_data_bytes = *api_total_response_size_clone.lock().await;
+                                    let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
+                                    let api_total_requests = api_total_requests_clone.lock().await.clone();
+                                    let api_success_requests = api_successful_requests_clone.lock().await.clone();
+                                    let api_rps = api_total_requests as f64/ (Instant::now() - test_start).as_secs_f64();
+                                    let api_success_rate = api_success_requests as f64 / api_total_requests as f64 * 100.0;
+                                    let throughput_per_second_kb = api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
+                                    // 给结果赋值
+                                    let  mut api_res = api_result_clone.lock().await;
+                                    api_res.response_time_95 = *api_histogram.percentile(95.0)?.range().start();
+                                    api_res.response_time_99 = *api_histogram.percentile(99.0)?.range().start();
+                                    api_res.median_response_time = *api_histogram.percentile(50.0)?.range().start();
+                                    api_res.max_response_time = *api_max_rt;
+                                    api_res.min_response_time = *api_min_rt;
+                                    api_res.total_requests = api_total_requests;
+                                    api_res.total_data_kb = api_total_data_kb;
+                                    api_res.rps = api_rps;
+                                    api_res.success_rate = api_success_rate;
+                                    api_res.err_count = *api_err_count_clone.lock().await;
+                                    api_res.throughput_per_second_kb = throughput_per_second_kb;
+                                    api_res.error_rate = api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
+                                    api_res.method = method_clone.clone().to_uppercase();
+                                    api_res.concurrent_number = *api_concurrent_number_clone.lock().await;
+                                    // 向最终结果中添加数据
+                                    let mut res = results_clone.lock().await;
+                                    if index < res.len() {
+                                        res[index] = api_res.clone();
+                                    } else {
+                                        eprintln!("results索引越界");
                                     }
                                 }
                             }
@@ -991,25 +1100,25 @@ mod tests {
             cookies: None,
             jsonpath_extract: Some(jsonpath_extracts),
         });
-        endpoints.push(ApiEndpoint{
-            name: "无断言1".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
-            timeout_secs: 10,
-            weight: 3,
-            json: Some(json!("{code: 400, data: null, msg: \"没有做替换的\", success: false}")),
-            form_data: None,
-            headers: None,
-            cookies: Some("bbbbb".to_string()),
-            assert_options: None,
-        });
+        // endpoints.push(ApiEndpoint{
+        //     name: "无断言1".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "GET".to_string(),
+        //     timeout_secs: 10,
+        //     weight: 3,
+        //     json: Some(json!("{code: 400, data: null, msg: \"没有做替换的\", success: false}")),
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: Some("bbbbb".to_string()),
+        //     assert_options: None,
+        // });
         endpoints.push(ApiEndpoint{
             name: "无断言2".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "GET".to_string(),
+            url: "http://127.0.0.1:8000/a".to_string(),
+            method: "POST".to_string(),
             timeout_secs: 10,
             weight: 3,
-            json: Some(json!("{code: {{test-code}}, data: {{test-msg}}, msg: \"做替换了的\", success: false}")),
+            json: Some(json!({"number": "{{test-code}}", "name": "{{test-msg}}"})),
             form_data: None,
             headers: None,
             cookies: Some("aaaaa-{{test}}".to_string()),

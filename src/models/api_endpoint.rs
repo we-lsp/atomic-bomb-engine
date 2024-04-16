@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::models::assert_option::AssertOption;
 
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ApiEndpoint {
     pub name: String,
     pub url: String,
