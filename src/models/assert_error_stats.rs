@@ -2,7 +2,7 @@ use std::sync::{Arc};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 
-
+#[derive(Clone, Debug)]
 pub struct AssertErrorStats {
     // {(url, 错误信息): 次数}
     pub(crate) errors: Arc<Mutex<HashMap<(String, String), u32>>>,
