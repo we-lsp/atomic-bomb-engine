@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JsonpathExtract{
     pub key: String,
     pub jsonpath: String
 }
 
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SetupApiEndpoint {
     pub name: String,
     pub url: String,

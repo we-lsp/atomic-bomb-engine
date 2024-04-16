@@ -156,8 +156,14 @@ pub async fn batch(
                         json_value.to_string()
                     }
                 };
-                println!("{:?}",json_string);
-                request = request.json(&json!(json_string));
+                // println!("{:?}",json_string);
+                let json_val = match Value::from_str(&*json_string){
+                    Ok(val) => val,
+                    Err(e) => {
+                        return Err(Error::msg(format!("转换json失败:{:?}", e)))
+                    }
+                };
+                request = request.json(&json_val);
             }
             // 构建form表单
             if let Some(mut form_data) = option.form_data{
@@ -469,12 +475,20 @@ pub async fn batch(
                                         json_value.to_string()
                                     }
                                 };
-                                json!(json_string)
+                                match Value::from_str(&*json_string){
+                                    Ok(val) => {
+                                        val
+                                    }
+                                    Err(e) => {
+                                        return Err(Error::msg(format!("转换json失败:{:?}", e)))
+                                    }
+                                }
                             }
                             false => {
                                 json_value
                             }
                         };
+                        // println!("{:?}", json_val);
                         if verbose{
                             println!("json:{:?}", json_val);
                         };
@@ -503,6 +517,7 @@ pub async fn batch(
                     if verbose{
                         println!("{:?}", request);
                     };
+                    // println!("{:?}", request);
                     // 记录开始时间
                     let start = Instant::now();
                     // 发送请求
@@ -1099,11 +1114,11 @@ mod tests {
         // });
         endpoints.push(ApiEndpoint{
             name: "无断言2".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            url: "http://127.0.0.1:8000/a".to_string(),
             method: "POST".to_string(),
             timeout_secs: 10,
             weight: 3,
-            json: Some(json!("{code: {{test-code}}, data: {{test-msg}}, msg: \"做替换了的\", success: false}")),
+            json: Some(json!({"number": "{{test-code}}", "name": "{{test-msg}}"})),
             form_data: None,
             headers: None,
             cookies: Some("aaaaa-{{test}}".to_string()),
