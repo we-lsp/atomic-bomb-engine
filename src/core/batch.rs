@@ -37,7 +37,8 @@ pub async fn batch(
     should_prevent: bool,
     api_endpoints: Vec<ApiEndpoint>,
     step_option: Option<StepOption>,
-    setup_options: Option<Vec<SetupApiEndpoint>>
+    setup_options: Option<Vec<SetupApiEndpoint>>,
+    mut channel_buffer_size: usize,
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -95,7 +96,10 @@ pub async fn batch(
     // 全局提取字典
     let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
     // 断言队列
-    let (tx_assert, rx_assert) = mpsc::channel(512);
+    if channel_buffer_size <= 0{
+        channel_buffer_size = 1024
+    }
+    let (tx_assert, rx_assert) = mpsc::channel(channel_buffer_size);
     // 开启一个任务，做断言的生产消费
     tokio::spawn(listening_assert::listening_assert(rx_assert));
     // 开始初始化
@@ -1062,6 +1066,7 @@ mod tests {
             endpoints,
             Option::from(StepOption { increase_step: 5, increase_interval: 2 }),
             Option::from(setup),
+            4096,
         ).await {
             Ok(r) => {
                 println!("{:#?}", r)

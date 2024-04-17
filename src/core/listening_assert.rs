@@ -3,6 +3,8 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use crate::models::assert_task::AssertTask;
 
+
+// todo: 断言可以使用模板
 pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>){
     loop {
         tokio::select! {
