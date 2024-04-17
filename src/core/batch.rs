@@ -369,6 +369,8 @@ pub async fn batch(
             let total_requests_clone = Arc::clone(&total_requests);
             // 每个接口端点副本
             let endpoint_clone = Arc::clone(&endpoint_arc);
+            // 将新url替换到每个接口中
+            endpoint_clone.lock().await.url = api_url.clone();
             // 最大响应时间副本
             let max_response_time_clone = max_response_time.clone();
             // 响应大小统计副本
