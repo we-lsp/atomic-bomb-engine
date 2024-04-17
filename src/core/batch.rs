@@ -55,7 +55,7 @@ pub async fn batch(
     // 统计最大响应时间
     let max_response_time = Arc::new(Mutex::new(0u64));
     // 统计最小响应时间
-    let min_response_time = Arc::new(Mutex::new(0u64));
+    let min_response_time = Arc::new(Mutex::new(u64::MAX));
     // 统计错误数量
     let err_count = Arc::new(Mutex::new(0));
     // 已开始并发数
@@ -301,7 +301,7 @@ pub async fn batch(
         // 接口统计最大响应时间
         let api_max_response_time = Arc::new(Mutex::new(0u64));
         // 接口统计最小响应时间
-        let api_min_response_time = Arc::new(Mutex::new(0u64));
+        let api_min_response_time = Arc::new(Mutex::new(u64::MAX));
         // 接口统计错误数量
         let api_err_count = Arc::new(Mutex::new(0));
         // 接口并发数统计
