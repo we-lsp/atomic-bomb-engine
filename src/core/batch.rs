@@ -264,6 +264,24 @@ pub async fn batch(
         let weight = endpoint.weight.clone();
         let name = endpoint.name.clone();
         let url = endpoint.url.clone();
+        let api_url = match is_need_render_template{
+            true => {
+                // 使用模版替换cookies
+                let handlebars = Handlebars::new();
+                match handlebars.render_template(&*url, &json!(*extract_map_arc.lock().await)){
+                    Ok(c) => {
+                        c
+                    }
+                    Err(e) => {
+                        eprintln!("{:?}", e);
+                        url.clone()
+                    }
+                }
+            }
+            false => {
+                url.clone()
+            }
+        };
         drop(endpoint);
         results_arc.lock().await.push(ApiResult::new());
         // 计算权重比例
@@ -293,7 +311,7 @@ pub async fn batch(
         // 初始化api结果
         let mut r = ApiResult::new();
         r.name = name.clone();
-        r.url = url.clone();
+        r.url = api_url.clone();
         let api_result = Arc::new(Mutex::new(r));
         // 根据step初始化并发控制器
         let controller =  match step_option.clone() {
@@ -327,6 +345,8 @@ pub async fn batch(
             let histogram_clone = histogram.clone();
             // 任务名称
             let api_name_clone = name.clone();
+            // url副本
+            let api_url_clone = api_url.clone();
             // api数据桶副本
             let api_histogram_clone = api_histogram.clone();
             // api成功数量统计副本
@@ -411,7 +431,7 @@ pub async fn batch(
                     // 构建请求方式
                     let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
                     // 构建请求
-                    let mut request = client.request(method, endpoint_clone.lock().await.url.clone());
+                    let mut request = client.request(method, api_url_clone.clone());
                     // 提取器b树 map副本
                     let extract_b_tree_map_clone = &extract_map_arc_clone.lock().await.clone();
                     // 构建请求头
@@ -614,7 +634,7 @@ pub async fn batch(
                                             Err(e) => {
                                                 *api_err_count_clone.lock().await += 1;
                                                 *err_count_clone.lock().await += 1;
-                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e), endpoint_clone.lock().await.url.clone()).await;
+                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e), api_url_clone.clone()).await;
                                                 break
                                             }
                                         };
@@ -737,7 +757,7 @@ pub async fn batch(
                                             Err(e) => {
                                                 *api_err_count_clone.lock().await += 1;
                                                 *err_count_clone.lock().await += 1;
-                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e), endpoint_clone.lock().await.url.clone()).await;
+                                                http_errors_clone.lock().await.increment(0, format!("获取响应流失败::{:?}", e), api_url_clone.clone()).await;
                                                 break
                                             }
                                         };
@@ -794,7 +814,7 @@ pub async fn batch(
                                 }
                             }
                             let err_msg = e.to_string();
-                            http_errors_clone.lock().await.increment(status_code, err_msg, endpoint_clone.lock().await.url.clone()).await;
+                            http_errors_clone.lock().await.increment(status_code, err_msg, api_url_clone.clone()).await;
                         },
                     }
                 }
@@ -983,7 +1003,7 @@ mod tests {
 
         endpoints.push(ApiEndpoint{
             name: "有断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
             method: "GET".to_string(),
             timeout_secs: 10,
             weight: 1,
