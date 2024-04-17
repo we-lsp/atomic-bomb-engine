@@ -101,6 +101,10 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>){
                     *task.api_successful_requests.lock().await += 1;
                 };
             }
+            else => {
+                eprintln!("断言任务执行完成！");
+                break;
+            }
         }
     }
 }
