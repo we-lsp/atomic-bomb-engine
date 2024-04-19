@@ -1,21 +1,22 @@
+use std::collections::{BTreeMap};
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::{Context, Error};
 use futures::future::join_all;
 use futures::stream::StreamExt;
+use handlebars::Handlebars;
 use histogram::Histogram;
 use jsonpath_lib::select;
 use reqwest::{Client, Method, StatusCode};
 use reqwest::header::{COOKIE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
-use handlebars::Handlebars;
-use std::collections::BTreeMap;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
@@ -24,11 +25,11 @@ use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
+use crate::models::assert_task::AssertTask;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::{InnerStepOption, StepOption};
-use crate::models::assert_task::AssertTask;
 
 pub async fn batch(
     test_duration_secs: u64,
@@ -646,24 +647,37 @@ pub async fn batch(
                                         let buffer = String::from_utf8(body_bytes_clone).expect("无法转换响应体为字符串");
                                         println!("{:+?}", buffer);
                                     }
-                                    // 断言失败的标志
-                                    // let mut assertion_failed = false;
                                     // 断言
                                     if let Some(assert_options) = assert_options_clone{
-                                        // 将任务生产到队列中
-                                        tx_assert_clone.send(AssertTask{
-                                            assert_options: assert_options.clone(),
-                                            body_bytes,
-                                            verbose,
-                                            err_count: err_count_clone.clone(),
-                                            api_err_count: api_err_count_clone.clone(),
-                                            assert_errors: assert_errors_clone.clone(),
-                                            endpoint: endpoint_clone.clone(),
-                                            api_name: api_name_clone.clone(),
-                                            successful_requests: successful_requests_clone.clone(),
-                                            api_successful_requests: api_successful_requests_clone.clone()
-                                        }).await.expect("生产断言任务失败");
-                                    }
+                                        // 没有获取到响应体，就不进行断言
+                                        if body_bytes.clone().len() > 0{
+                                            // 一次性通道，用于确定断言任务被消费完成后再进行数据同步
+                                            let (oneshot_tx, oneshot_rx) = oneshot::channel();
+                                            // 实例化任务
+                                            let task = AssertTask{
+                                                assert_options: assert_options.clone(),
+                                                body_bytes,
+                                                verbose,
+                                                err_count: err_count_clone.clone(),
+                                                api_err_count: api_err_count_clone.clone(),
+                                                assert_errors: assert_errors_clone.clone(),
+                                                endpoint: endpoint_clone.clone(),
+                                                api_name: api_name_clone.clone(),
+                                                successful_requests: successful_requests_clone.clone(),
+                                                api_successful_requests: api_successful_requests_clone.clone(),
+                                                completion_signal: oneshot_tx,
+                                            };
+                                            // 存在断言数据将任务生产到队列中
+                                            tx_assert_clone.send(task).await.expect("生产断言任务失败");
+                                            // 等待任务消费完成后再进行后面的赋值操作，用于数据同步
+                                            oneshot_rx.await.expect("任务完成信号失败");
+                                        };
+                                    } else{
+                                        // 没有断言的时候将成功数据+1
+                                        *successful_requests_clone.lock().await += 1;
+                                        *api_successful_requests_clone.lock().await += 1;
+                                    };
+                                    // 给结果赋值
                                     let api_total_data_bytes = *api_total_response_size_clone.lock().await;
                                     let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                                     let api_total_requests = api_total_requests_clone.lock().await.clone();
@@ -671,7 +685,7 @@ pub async fn batch(
                                     let api_rps = api_total_requests as f64/ (Instant::now() - test_start).as_secs_f64();
                                     let api_success_rate = api_success_requests as f64 / api_total_requests as f64 * 100.0;
                                     let throughput_per_second_kb = api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
-                                    // 给结果赋值
+
                                     let  mut api_res = api_result_clone.lock().await;
                                     api_res.response_time_95 = *api_histogram.percentile(95.0)?.range().start();
                                     api_res.response_time_99 = *api_histogram.percentile(99.0)?.range().start();
@@ -693,7 +707,8 @@ pub async fn batch(
                                         res[index] = api_res.clone();
                                     } else {
                                         eprintln!("results索引越界");
-                                    }
+                                    };
+                                    // println!("res:{:?}", res);
                                 }
                                 // 状态码错误
                                 _ =>{
@@ -801,7 +816,6 @@ pub async fn batch(
                                     }
                                 }
                             }
-
                         },
                         Err(e) => {
                             *err_count_clone.lock().await += 1;
@@ -824,6 +838,7 @@ pub async fn batch(
             });
             handles.push(handle);
         }
+        // println!("err count:{:?}",api_err_count.lock().await);
     }
 
     // 共享任务状态
@@ -935,7 +950,7 @@ pub async fn batch(
                 eprintln!("协程被取消或意外停止::{:?}", err);
             }
         };
-    }
+    };
 
     // 对结果进行赋值
     let err_count_clone = Arc::clone(&err_count);
@@ -991,6 +1006,7 @@ pub async fn batch(
 #[cfg(test)]
 mod tests {
     use core::option::Option;
+
     use crate::models::assert_option::AssertOption;
     use crate::models::setup::JsonpathExtract;
 
@@ -1019,7 +1035,7 @@ mod tests {
         // endpoints.push(ApiEndpoint{
         //     name: "无断言".to_string(),
         //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "GET".to_string(),
+        //     method: "POST".to_string(),
         //     timeout_secs: 10,
         //     weight: 3,
         //     json: None,
@@ -1083,7 +1099,7 @@ mod tests {
         match batch(
             5,
             100,
-            true,
+            false,
             true,
             endpoints,
             Option::from(StepOption { increase_step: 5, increase_interval: 2 }),

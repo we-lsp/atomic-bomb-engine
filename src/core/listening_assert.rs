@@ -1,6 +1,6 @@
 use jsonpath_lib::select;
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc};
 use crate::models::assert_task::AssertTask;
 
 
@@ -28,7 +28,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>){
                     }
                 };
                 // 多断言
-                for assert_option in task.assert_options {
+                for assert_option in &task.assert_options {
                     if task.body_bytes.len() == 0{
                         eprintln!("无法获取到结构体，不进行断言");
                         break
@@ -99,6 +99,9 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>){
                     *task.successful_requests.lock().await += 1;
                     // api正确统计+1
                     *task.api_successful_requests.lock().await += 1;
+                };
+                if let Err(_) = task.completion_signal.send(()){
+                    eprintln!("回调任务状态失败");
                 };
             }
             else => {
