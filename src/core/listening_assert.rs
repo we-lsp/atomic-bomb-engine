@@ -100,6 +100,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>){
                     // api正确统计+1
                     *task.api_successful_requests.lock().await += 1;
                 };
+                // 回调完成信号
                 if let Err(_) = task.completion_signal.send(()){
                     eprintln!("回调任务状态失败");
                 };
