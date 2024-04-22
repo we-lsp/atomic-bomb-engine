@@ -584,9 +584,10 @@ pub async fn batch(
                                         请求成功
                                     ---------------
                                     */
-                                    let mut api_histogram = api_histogram_clone.lock().await;
                                     // 响应时间
                                     let duration = start.elapsed().as_millis() as u64;
+                                    // api统计桶
+                                    let mut api_histogram = api_histogram_clone.lock().await;
                                     // 最大请求时间
                                     let mut max_rt = max_response_time_clone.lock().await;
                                     *max_rt = (*max_rt).max(duration);
@@ -712,6 +713,8 @@ pub async fn batch(
                                 }
                                 // 状态码错误
                                 _ =>{
+                                    // 响应时间
+                                    let duration = start.elapsed().as_millis() as u64;
                                     *err_count_clone.lock().await += 1;
                                     *api_err_count_clone.lock().await += 1;
                                     let status_code = u16::from(response.status());
@@ -722,8 +725,6 @@ pub async fn batch(
                                         println!("{:?}-HTTP 错误: 状态码 {:?}",api_name_clone, status_code)
                                     }
                                     let mut api_histogram = api_histogram_clone.lock().await;
-                                    // 响应时间
-                                    let duration = start.elapsed().as_millis() as u64;
                                     // 最大请求时间
                                     let mut max_rt = max_response_time_clone.lock().await;
                                     *max_rt = (*max_rt).max(duration);
