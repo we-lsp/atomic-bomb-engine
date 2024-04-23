@@ -1,6 +1,6 @@
 [package]
 name = "atomic-bomb-engine"
-version = "0.12.1"
+version = "0.15.0"
 edition = "2021"
 description = "A high performance torture testing engine"
 license = "MIT"
@@ -25,6 +25,7 @@ time = "0.3.34"
 os_info= "3.7.0"
 futures = "0.3.30"
 handlebars = "5.1.2"
+rand = "0.8.5"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winbase"] }
