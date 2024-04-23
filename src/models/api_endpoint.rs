@@ -5,6 +5,12 @@ use crate::models::assert_option::AssertOption;
 
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ThinkTime{
+    pub min_millis: u64,
+    pub max_millis: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ApiEndpoint {
     pub name: String,
     pub url: String,
@@ -16,4 +22,5 @@ pub struct ApiEndpoint {
     pub headers: Option<HashMap<String, String>>,
     pub cookies: Option<String>,
     pub assert_options: Option<Vec<AssertOption>>,
+    pub think_time: Option<ThinkTime>,
 }

@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::interval;
+use rand::Rng;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
@@ -431,6 +434,8 @@ pub async fn batch(
                     let cookie_clone = endpoint_clone.lock().await.cookies.clone();
                     // 断言副本
                     let assert_options_clone = endpoint_clone.lock().await.assert_options.clone();
+                    // 思考时间副本
+                    let think_time_clone = endpoint_clone.lock().await.think_time.clone();
                     // 构建请求方式
                     let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
                     // 构建请求
@@ -553,6 +558,22 @@ pub async fn batch(
                         println!("{:?}", request);
                     };
                     // println!("{:?}", request);
+                    // 如果有思考时间，暂时不发送请求，先等待
+                    if let Some(think_time) = think_time_clone{
+                        match think_time.min_millis <= think_time.max_millis{
+                            true => {
+                                let mut rng = StdRng::from_entropy();
+                                let tt = rng.gen_range(think_time.min_millis..=think_time.max_millis);
+                                if verbose {
+                                    println!("思考时间：{:?}", tt);
+                                }
+                                tokio::time::sleep(Duration::from_millis(tt)).await;
+                            }
+                            false => {
+                                eprintln!("最小思考时间大于最大思考时间，该配置不生效!")
+                            }
+                        }
+                    }
                     // 记录开始时间
                     let start = Instant::now();
                     // 发送请求
@@ -1007,9 +1028,10 @@ pub async fn batch(
 #[cfg(test)]
 mod tests {
     use core::option::Option;
+    use crate::models::api_endpoint::ThinkTime;
 
     use crate::models::assert_option::AssertOption;
-    use crate::models::setup::JsonpathExtract;
+    use crate::models::setup::{JsonpathExtract};
 
     use super::*;
 
@@ -1031,6 +1053,7 @@ mod tests {
             headers: None,
             cookies: None,
             assert_options: Some(assert_vec.clone()),
+            think_time: Some(ThinkTime{min_millis: 300, max_millis: 500})
         });
         // //
         // endpoints.push(ApiEndpoint{
