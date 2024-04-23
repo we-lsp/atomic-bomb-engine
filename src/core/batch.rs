@@ -435,7 +435,7 @@ pub async fn batch(
                     // 断言副本
                     let assert_options_clone = endpoint_clone.lock().await.assert_options.clone();
                     // 思考时间副本
-                    let think_time_clone = endpoint_clone.lock().await.think_time.clone();
+                    let think_time_clone = endpoint_clone.lock().await.think_time_option.clone();
                     // 构建请求方式
                     let method = Method::from_str(&method_clone.to_uppercase()).map_err(|_| Error::msg("构建请求方法失败"))?;
                     // 构建请求
@@ -1053,7 +1053,7 @@ mod tests {
             headers: None,
             cookies: None,
             assert_options: Some(assert_vec.clone()),
-            think_time: Some(ThinkTime{min_millis: 300, max_millis: 500})
+            think_time_option: Some(ThinkTime{min_millis: 300, max_millis: 500})
         });
         // //
         // endpoints.push(ApiEndpoint{

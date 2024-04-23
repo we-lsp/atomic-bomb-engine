@@ -22,5 +22,5 @@ pub struct ApiEndpoint {
     pub headers: Option<HashMap<String, String>>,
     pub cookies: Option<String>,
     pub assert_options: Option<Vec<AssertOption>>,
-    pub think_time: Option<ThinkTime>,
+    pub think_time_option: Option<ThinkTime>,
 }
