@@ -74,7 +74,8 @@ pub async fn start_setup(
                 Err(e) => {
                     return Err(Error::msg(format!(
                         "转换json失败:{:?},原始json: {:?}",
-                        e, json_string
+                        e,
+                        json_string.to_string()
                     )))
                 }
             };
@@ -121,10 +122,14 @@ pub async fn start_setup(
                         // 将响应转换为json
                         let json_value: Value = match serde_json::from_slice(&*body_bytes) {
                             Err(e) => {
+                                let err_msg = match String::from_utf8(body_bytes) {
+                                    Ok(str_json) => str_json,
+                                    Err(e) => e.to_string(),
+                                };
                                 return Err(Error::msg(format!(
                                     "转换json失败:{:?}, 原始json: {:?}",
-                                    e, body_bytes
-                                )))
+                                    e, err_msg
+                                )));
                             }
                             Ok(val) => val,
                         };

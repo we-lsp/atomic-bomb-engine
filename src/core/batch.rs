@@ -409,7 +409,8 @@ pub async fn batch(
                                     Err(e) => {
                                         return Err(Error::msg(format!(
                                             "转换json失败:{:?}, 原始json: {:?}",
-                                            e, json_string
+                                            e,
+                                            json_string.to_string()
                                         )))
                                     }
                                 }
