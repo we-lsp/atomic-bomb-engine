@@ -305,7 +305,7 @@ pub async fn batch(
                                     "接口-{:?}初始化失败,v-user停止运行!!: {:?}",
                                     api_name_clone.clone(),
                                     e
-                                )))
+                                )));
                             }
                         };
                     }
