@@ -284,7 +284,7 @@ pub async fn batch(
                 // 统计并发数
                 *api_concurrent_number_clone.lock().await += 1;
                 *concurrent_number_clone.lock().await += 1;
-                while Instant::now() < test_end {
+                'RETRY: while Instant::now() < test_end {
                     // 设置api的提取器
                     let mut api_extract_b_tree_map = BTreeMap::new();
                     // 将全局字典加入到api字典
@@ -308,13 +308,20 @@ pub async fn batch(
                                 };
                             }
                             Err(e) => {
-                                *api_concurrent_number_clone.lock().await -= 1;
-                                *concurrent_number_clone.lock().await -= 1;
-                                return Err(Error::msg(format!(
-                                    "接口-{:?}初始化失败,v-user停止运行!!: {:?}",
+                                // *api_concurrent_number_clone.lock().await -= 1;
+                                // *concurrent_number_clone.lock().await -= 1;
+                                // return Err(Error::msg(format!(
+                                //     "接口-{:?}初始化失败,v-user停止运行!!: {:?}",
+                                //     api_name_clone.clone(),
+                                //     e
+                                // )));
+                                eprintln!(
+                                    "接口-{:?}初始化失败,1秒后重试!!: {:?}",
                                     api_name_clone.clone(),
-                                    e
-                                )));
+                                    e.to_string()
+                                );
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                continue 'RETRY;
                             }
                         };
                     }
