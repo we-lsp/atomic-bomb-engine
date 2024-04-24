@@ -71,7 +71,12 @@ pub async fn start_setup(
             // println!("{:?}",json_string);
             let json_val = match Value::from_str(&*json_string) {
                 Ok(val) => val,
-                Err(e) => return Err(Error::msg(format!("转换json失败:{:?}", e))),
+                Err(e) => {
+                    return Err(Error::msg(format!(
+                        "转换json失败:{:?},原始json: {:?}",
+                        e, json_string
+                    )))
+                }
             };
             request = request.json(&json_val);
         }
