@@ -75,6 +75,22 @@ pub async fn batch(
     let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
     // 总权重
     let total_weight: u32 = api_endpoints.iter().map(|e| e.weight).sum();
+    // 断言队列
+    if assert_channel_buffer_size <= 0 {
+        assert_channel_buffer_size = 1024
+    }
+    let (tx_assert, rx_assert) = mpsc::channel(assert_channel_buffer_size);
+    // 开启一个任务，做断言的生产消费
+    if api_endpoints
+        .clone()
+        .into_iter()
+        .any(|item| item.assert_options.is_some())
+    {
+        if verbose {
+            println!("开启断言消费任务");
+        };
+        tokio::spawn(listening_assert::listening_assert(rx_assert));
+    };
     // 用arc包装每一个endpoint
     let api_endpoints_arc: Vec<Arc<Mutex<ApiEndpoint>>> = api_endpoints
         .into_iter()
@@ -97,13 +113,6 @@ pub async fn batch(
     let mut is_need_render_template = false;
     // 全局提取字典
     let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
-    // 断言队列
-    if assert_channel_buffer_size <= 0 {
-        assert_channel_buffer_size = 1024
-    }
-    let (tx_assert, rx_assert) = mpsc::channel(assert_channel_buffer_size);
-    // 开启一个任务，做断言的生产消费
-    tokio::spawn(listening_assert::listening_assert(rx_assert));
     // 创建http客户端
     let builder = Client::builder()
         .cookie_store(cookie_store_enable)
@@ -1021,36 +1030,37 @@ mod tests {
         });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        endpoints.push(ApiEndpoint {
-            name: "有断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
-            method: "GET".to_string(),
-            weight: 1,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: Some(assert_vec.clone()),
-            // think_time_option: Some(ThinkTime {
-            //     min_millis: 300,
-            //     max_millis: 500,
-            // }),
-            think_time_option: None,
-            setup_options: None,
-        });
-        // //
-        // endpoints.push(ApiEndpoint{
-        //     name: "无断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "POST".to_string(),
-        //     timeout_secs: 10,
-        //     weight: 3,
+        // endpoints.push(ApiEndpoint {
+        //     name: "有断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
+        //     method: "GET".to_string(),
+        //     weight: 1,
         //     json: None,
         //     form_data: None,
         //     headers: None,
         //     cookies: None,
-        //     assert_options: None,
+        //     assert_options: Some(assert_vec.clone()),
+        //     // think_time_option: Some(ThinkTime {
+        //     //     min_millis: 300,
+        //     //     max_millis: 500,
+        //     // }),
+        //     think_time_option: None,
+        //     setup_options: None,
         // });
+        // //
+        endpoints.push(ApiEndpoint {
+            name: "无断言".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "POST".to_string(),
+            weight: 3,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: None,
+            assert_options: None,
+            think_time_option: None,
+            setup_options: None,
+        });
 
         // endpoints.push(ApiEndpoint{
         //     name: "test-1".to_string(),
