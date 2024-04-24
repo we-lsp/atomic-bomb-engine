@@ -298,7 +298,13 @@ pub async fn batch(
                                     api_extract_b_tree_map.extend(extract);
                                 };
                             }
-                            Err(e) => return Err(Error::msg(format!("全局初始化失败:{:?}", e))),
+                            Err(e) => {
+                                return Err(Error::msg(format!(
+                                    "接口-{:?}初始化失败:{:?}",
+                                    api_name_clone.clone(),
+                                    e
+                                )))
+                            }
                         };
                     }
                     // 总请求数
