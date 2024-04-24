@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use crate::models::assert_option::AssertOption;
+use crate::models::setup::SetupApiEndpoint;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::models::assert_option::AssertOption;
-
+use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ThinkTime{
+pub struct ThinkTime {
     pub min_millis: u64,
     pub max_millis: u64,
 }
@@ -23,4 +23,5 @@ pub struct ApiEndpoint {
     pub cookies: Option<String>,
     pub assert_options: Option<Vec<AssertOption>>,
     pub think_time_option: Option<ThinkTime>,
+    pub setup_options: Option<Vec<SetupApiEndpoint>>,
 }

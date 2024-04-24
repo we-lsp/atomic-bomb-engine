@@ -1,7 +1,6 @@
-use std::sync::{Arc};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::Mutex;
-
 
 pub struct HttpErrorStats {
     pub(crate) errors: Arc<Mutex<HashMap<(u16, String, String), u32>>>,

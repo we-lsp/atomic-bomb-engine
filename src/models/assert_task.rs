@@ -1,10 +1,9 @@
-use std::sync::Arc;
-use tokio::sync::{Mutex};
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::assert_option::AssertOption;
+use std::sync::Arc;
 use tokio::sync::oneshot;
-
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct AssertTask {
@@ -18,5 +17,5 @@ pub struct AssertTask {
     pub(crate) api_name: String,
     pub(crate) successful_requests: Arc<Mutex<i32>>,
     pub(crate) api_successful_requests: Arc<Mutex<i32>>,
-    pub(crate)  completion_signal: oneshot::Sender<()>,
+    pub(crate) completion_signal: oneshot::Sender<()>,
 }

@@ -1,8 +1,7 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-#[derive(Debug)]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestResult {
     pub total_duration: f64,
     pub success_rate: f64,
@@ -18,11 +17,10 @@ pub struct TestResult {
     pub throughput_per_second_kb: f64,
     pub http_errors: HashMap<(u16, String, String), u32>,
     pub timestamp: u128,
-    pub assert_errors: HashMap<(String, String), u32>
+    pub assert_errors: HashMap<(String, String), u32>,
 }
 
-#[derive(Debug)]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchResult {
     pub total_duration: f64,
     pub success_rate: f64,
@@ -41,12 +39,11 @@ pub struct BatchResult {
     pub timestamp: u128,
     pub assert_errors: HashMap<(String, String), u32>,
     pub total_concurrent_number: i32,
-    pub api_results: Vec<ApiResult>
+    pub api_results: Vec<ApiResult>,
 }
 
-#[derive(Debug)]
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ApiResult{
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiResult {
     pub name: String,
     pub url: String,
     pub method: String,

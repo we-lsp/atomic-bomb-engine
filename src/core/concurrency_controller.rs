@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tokio::sync::{Semaphore, Mutex};
-use std::time::Duration;
-use std::cmp::min;
 use crate::models::step_option::InnerStepOption;
+use std::cmp::min;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{Mutex, Semaphore};
 
 pub struct ConcurrencyController {
     semaphore: Arc<Semaphore>,
@@ -39,7 +39,10 @@ impl ConcurrencyController {
                 tokio::time::sleep(Duration::from_secs(step_option.increase_interval)).await;
                 let mut fractional_accumulator = self.fractional_accumulator.lock().await;
                 *fractional_accumulator += step_option.increase_step;
-                let permits_to_add = min(fractional_accumulator.floor() as usize, self.total_permits - permits_added);
+                let permits_to_add = min(
+                    fractional_accumulator.floor() as usize,
+                    self.total_permits - permits_added,
+                );
                 if permits_to_add > 0 {
                     self.semaphore.add_permits(permits_to_add);
                     permits_added += permits_to_add;
