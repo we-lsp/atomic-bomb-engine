@@ -18,13 +18,12 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
-use tokio::time::interval;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::sleep_guard::SleepGuard;
-use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
-use crate::core::{listening_assert, setup};
+use crate::core::status_share::RESULTS_SHOULD_STOP;
+use crate::core::{listening_assert, setup, share_result};
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::assert_task::AssertTask;
@@ -308,13 +307,6 @@ pub async fn batch(
                                 };
                             }
                             Err(e) => {
-                                // *api_concurrent_number_clone.lock().await -= 1;
-                                // *concurrent_number_clone.lock().await -= 1;
-                                // return Err(Error::msg(format!(
-                                //     "接口-{:?}初始化失败,v-user停止运行!!: {:?}",
-                                //     api_name_clone.clone(),
-                                //     e
-                                // )));
                                 eprintln!(
                                     "接口-{:?}初始化失败,1秒后重试!!: {:?}",
                                     api_name_clone.clone(),
@@ -508,11 +500,7 @@ pub async fn batch(
                                 | StatusCode::USE_PROXY
                                 | StatusCode::TEMPORARY_REDIRECT
                                 | StatusCode::PERMANENT_REDIRECT => {
-                                    /*
-                                    ---------------
-                                        请求成功
-                                    ---------------
-                                    */
+                                    // 请求成功的情况
                                     // 响应时间
                                     let duration = start.elapsed().as_millis() as u64;
                                     // api统计桶
@@ -857,94 +845,21 @@ pub async fn batch(
     }
 
     // 共享任务状态
-    {
-        let total_requests_clone = Arc::clone(&total_requests);
-        let successful_requests_clone = Arc::clone(&successful_requests);
-        let histogram_clone = Arc::clone(&histogram);
-        let total_response_size_clone = Arc::clone(&total_response_size);
-        let http_errors_clone = Arc::clone(&http_errors);
-        let err_count_clone = Arc::clone(&err_count);
-        let max_resp_time_clone = Arc::clone(&max_response_time);
-        let min_resp_time_clone = Arc::clone(&min_response_time);
-        let assert_error_clone = Arc::clone(&assert_errors);
-        let api_results_clone = Arc::clone(&results_arc);
-        let concurrent_number_clone = Arc::clone(&concurrent_number);
-
-        tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(1));
-            let should_stop = *RESULTS_SHOULD_STOP.lock().await;
-            while !should_stop {
-                interval.tick().await;
-
-                let err_count = *err_count_clone.lock().await;
-                let max_response_time_c = *max_resp_time_clone.lock().await;
-                let min_response_time_c = *min_resp_time_clone.lock().await;
-                let total_duration = (Instant::now() - test_start).as_secs_f64();
-                let total_requests = *total_requests_clone.lock().await as f64;
-                let successful_requests = *successful_requests_clone.lock().await as f64;
-                let success_rate = successful_requests / total_requests * 100.0;
-                let error_rate = err_count as f64 / total_requests * 100.0;
-                let histogram = histogram_clone.lock().await;
-                let total_response_size_kb =
-                    *total_response_size_clone.lock().await as f64 / 1024.0;
-                let throughput_kb_s = total_response_size_kb / total_duration;
-                let http_errors = http_errors_clone.lock().await.errors.clone();
-                let assert_errors = assert_error_clone.lock().await.errors.clone();
-                let rps = total_requests / total_duration;
-                let resp_median_line = match histogram.percentile(50.0) {
-                    Ok(bucket) => *bucket.range().start(),
-                    Err(_) => 0,
-                };
-                let resp_95_line = match histogram.percentile(95.0) {
-                    Ok(bucket) => *bucket.range().start(),
-                    Err(_) => 0,
-                };
-                let resp_99_line = match histogram.percentile(99.0) {
-                    Ok(bucket) => *bucket.range().start(),
-                    Err(_) => 0,
-                };
-                let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
-                    Ok(n) => n.as_millis(),
-                    Err(_) => 0,
-                };
-                let api_results = api_results_clone.lock().await;
-                // println!("{:?}", api_results);
-                // 已开启的并发量
-                let total_concurrent_number = *concurrent_number_clone.lock().await;
-                let mut queue = RESULTS_QUEUE.lock().await;
-                // 如果队列中有了一个数据了，就移除旧数据
-                if queue.len() == 1 {
-                    queue.pop_front();
-                }
-                let result = BatchResult {
-                    total_duration,
-                    success_rate,
-                    error_rate,
-                    median_response_time: resp_median_line,
-                    response_time_95: resp_95_line,
-                    response_time_99: resp_99_line,
-                    total_requests: total_requests as u64,
-                    rps,
-                    max_response_time: max_response_time_c,
-                    min_response_time: min_response_time_c,
-                    err_count,
-                    total_data_kb: total_response_size_kb,
-                    throughput_per_second_kb: throughput_kb_s,
-                    http_errors: http_errors.lock().await.clone(),
-                    timestamp,
-                    assert_errors: assert_errors.lock().await.clone(),
-                    total_concurrent_number,
-                    api_results: api_results.to_vec().clone(),
-                };
-                let elapsed = test_start.elapsed();
-                if verbose {
-                    println!("{:?}-{:#?}", elapsed.as_millis(), result.clone());
-                };
-                // 添加新结果
-                queue.push_back(result);
-            }
-        });
-    }
+    tokio::spawn(share_result::collect_results(
+        Arc::clone(&total_requests),
+        Arc::clone(&successful_requests),
+        Arc::clone(&histogram),
+        Arc::clone(&total_response_size),
+        Arc::clone(&http_errors),
+        Arc::clone(&err_count),
+        Arc::clone(&max_response_time),
+        Arc::clone(&min_response_time),
+        Arc::clone(&assert_errors),
+        Arc::clone(&results_arc),
+        Arc::clone(&concurrent_number),
+        verbose,
+        test_start,
+    ));
 
     // 等待任务完成
     let task_results = join_all(handles).await;
@@ -1037,23 +952,23 @@ mod tests {
         });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        // endpoints.push(ApiEndpoint {
-        //     name: "有断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
-        //     method: "GET".to_string(),
-        //     weight: 1,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: Some(assert_vec.clone()),
-        //     // think_time_option: Some(ThinkTime {
-        //     //     min_millis: 300,
-        //     //     max_millis: 500,
-        //     // }),
-        //     think_time_option: None,
-        //     setup_options: None,
-        // });
+        endpoints.push(ApiEndpoint {
+            name: "有断言".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
+            method: "GET".to_string(),
+            weight: 1,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: None,
+            assert_options: Some(assert_vec.clone()),
+            // think_time_option: Some(ThinkTime {
+            //     min_millis: 300,
+            //     max_millis: 500,
+            // }),
+            think_time_option: None,
+            setup_options: None,
+        });
         // //
         endpoints.push(ApiEndpoint {
             name: "无断言".to_string(),
