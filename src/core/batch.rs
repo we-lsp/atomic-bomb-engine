@@ -500,7 +500,7 @@ pub async fn batch(
                                 | StatusCode::USE_PROXY
                                 | StatusCode::TEMPORARY_REDIRECT
                                 | StatusCode::PERMANENT_REDIRECT => {
-                                    /// # 请求成功的情况
+                                    // 请求成功的情况
                                     // 响应时间
                                     let duration = start.elapsed().as_millis() as u64;
                                     // api统计桶
