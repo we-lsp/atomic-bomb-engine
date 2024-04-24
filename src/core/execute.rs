@@ -1,29 +1,29 @@
-use std::str::FromStr;
-use std::sync::{Arc};
+use anyhow::Context;
 use histogram::Histogram;
-use std::time::{Duration, Instant};
-use tokio::time::interval;
-use anyhow::{Context};
-use reqwest::{Method, StatusCode};
-use tokio::sync::Mutex;
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, HeaderName};
-use serde_json::Value;
-use std::time::{SystemTime, UNIX_EPOCH};
 use jsonpath_lib::select;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, COOKIE};
+use reqwest::{Method, StatusCode};
+use serde_json::Value;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
+use tokio::time::interval;
 
 use crate::core::parse_form_data;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{SINGLE_RESULT_QUEUE, SINGLE_SHOULD_STOP};
 use crate::models::assert_error_stats::AssertErrorStats;
+use crate::models::assert_option::AssertOption;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::TestResult;
-use crate::models::assert_option::AssertOption;
 
 pub async fn run(
     url: &str,
     test_duration_secs: u64,
     concurrent_requests: i32,
-    timeout_secs:u64,
+    timeout_secs: u64,
     verbose: bool,
     method: &str,
     json_str: Option<String>,
@@ -31,7 +31,7 @@ pub async fn run(
     headers: Option<Vec<String>>,
     cookie: Option<String>,
     should_prevent: bool,
-    assert_options: Option<Vec<AssertOption>>
+    assert_options: Option<Vec<AssertOption>>,
 ) -> anyhow::Result<TestResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -58,7 +58,7 @@ pub async fn run(
     // 统计断言错误
     let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
     // 校验如果json和form同时发送，直接报错
-    if json_str.is_some() && form_data_str.is_some(){
+    if json_str.is_some() && form_data_str.is_some() {
         return Err(anyhow::Error::msg("json和form不允许同时发送"));
     }
     // 如果传入了json，就从这里解析
@@ -70,24 +70,28 @@ pub async fn run(
     // 如果传入了header，就从这里做解析
     let header_map = match headers {
         None => Arc::new(None),
-        Some(headers) =>{
+        Some(headers) => {
             let mut temp_headers_map = HeaderMap::new();
             for header in headers {
                 let parts: Vec<&str> = header.splitn(2, ':').collect();
                 if parts.len() == 2 {
                     match parts[0].trim().parse::<HeaderName>() {
-                        Ok(header_name) =>{
-                            match HeaderValue::from_str(parts[1].trim()) {
-                                Ok(header_value)=>{
-                                    temp_headers_map.insert(header_name, header_value);
-                                }
-                                Err(err) => {
-                                    return Err(anyhow::Error::msg(format!("无法解析header的值{:?}", err)));
-                                }
+                        Ok(header_name) => match HeaderValue::from_str(parts[1].trim()) {
+                            Ok(header_value) => {
+                                temp_headers_map.insert(header_name, header_value);
                             }
-                        }
+                            Err(err) => {
+                                return Err(anyhow::Error::msg(format!(
+                                    "无法解析header的值{:?}",
+                                    err
+                                )));
+                            }
+                        },
                         Err(err) => {
-                            return Err(anyhow::Error::msg(format!("无法解析header名称:{:?}", err)));
+                            return Err(anyhow::Error::msg(format!(
+                                "无法解析header名称:{:?}",
+                                err
+                            )));
                         }
                     }
                 }
@@ -103,11 +107,9 @@ pub async fn run(
             Arc::new(Some(form_data))
         }
     };
-    let assert_options:Arc<Option<Vec<AssertOption>>> = match assert_options{
+    let assert_options: Arc<Option<Vec<AssertOption>>> = match assert_options {
         None => Arc::new(None),
-        Some(v) => {
-            Arc::new(Some(v))
-        }
+        Some(v) => Arc::new(Some(v)),
     };
     // 开始测试时间
     let test_start = Instant::now();
@@ -119,7 +121,10 @@ pub async fn run(
         let client_builder = reqwest::Client::builder();
         // 如果传入了超时时间，客户端添加超时时间
         let client = if timeout_secs > 0 {
-            client_builder.timeout(Duration::from_secs(timeout_secs)).build().context("构建带超时的http客户端失败")?
+            client_builder
+                .timeout(Duration::from_secs(timeout_secs))
+                .build()
+                .context("构建带超时的http客户端失败")?
         } else {
             client_builder.build().context("构建http客户端失败")?
         };
@@ -182,7 +187,7 @@ pub async fn run(
                     match HeaderValue::from_str(cookie_clone) {
                         Ok(h) => {
                             headers.insert(COOKIE, h);
-                        },
+                        }
                         Err(e) => {
                             eprintln!("无法添加cookie:{:?}", e);
                         }
@@ -199,7 +204,7 @@ pub async fn run(
                     request = request.json(value);
                 }
                 // 判断是否传入了form，如果传入了，就用form形式发送请求
-                if let Some(form_map) = &*form_map_clone{
+                if let Some(form_map) = &*form_map_clone {
                     request = request.form(form_map);
                 }
                 let url_string = url.to_string();
@@ -207,26 +212,26 @@ pub async fn run(
                 match request.send().await {
                     // 请求成功
                     Ok(response) => {
-                        match response.status(){
+                        match response.status() {
                             // 正确的状态码
-                            StatusCode::OK |
-                            StatusCode::CREATED |
-                            StatusCode::ACCEPTED |
-                            StatusCode::NON_AUTHORITATIVE_INFORMATION |
-                            StatusCode::NO_CONTENT |
-                            StatusCode::RESET_CONTENT |
-                            StatusCode::PARTIAL_CONTENT |
-                            StatusCode::MULTI_STATUS |
-                            StatusCode::ALREADY_REPORTED |
-                            StatusCode::IM_USED |
-                            StatusCode::MULTIPLE_CHOICES |
-                            StatusCode::MOVED_PERMANENTLY |
-                            StatusCode::FOUND |
-                            StatusCode::SEE_OTHER |
-                            StatusCode::NOT_MODIFIED |
-                            StatusCode::USE_PROXY |
-                            StatusCode::TEMPORARY_REDIRECT |
-                            StatusCode::PERMANENT_REDIRECT => {
+                            StatusCode::OK
+                            | StatusCode::CREATED
+                            | StatusCode::ACCEPTED
+                            | StatusCode::NON_AUTHORITATIVE_INFORMATION
+                            | StatusCode::NO_CONTENT
+                            | StatusCode::RESET_CONTENT
+                            | StatusCode::PARTIAL_CONTENT
+                            | StatusCode::MULTI_STATUS
+                            | StatusCode::ALREADY_REPORTED
+                            | StatusCode::IM_USED
+                            | StatusCode::MULTIPLE_CHOICES
+                            | StatusCode::MOVED_PERMANENTLY
+                            | StatusCode::FOUND
+                            | StatusCode::SEE_OTHER
+                            | StatusCode::NOT_MODIFIED
+                            | StatusCode::USE_PROXY
+                            | StatusCode::TEMPORARY_REDIRECT
+                            | StatusCode::PERMANENT_REDIRECT => {
                                 // 数据统计
                                 let duration = start.elapsed().as_millis() as u64;
                                 let mut max_rt = max_response_time_clone.lock().await;
@@ -234,7 +239,7 @@ pub async fn run(
                                 let mut min_rt = min_response_time_clone.lock().await;
                                 *min_rt = (*min_rt).min(duration);
                                 match histogram_clone.lock().await.increment(duration) {
-                                    Ok(_) => {},
+                                    Ok(_) => {}
                                     Err(err) => eprintln!("错误:{}", err),
                                 }
                                 if let Some(content_length) = response.content_length() {
@@ -244,58 +249,54 @@ pub async fn run(
                                 let url_string = response.url().to_string();
 
                                 let body_bytes = match response.bytes().await {
-                                        Ok(bytes) => {
-                                            Some(bytes)
-                                        },
-                                        Err(e) => {
-                                            eprintln!("读取响应失败:{:?}", e.to_string());
-                                            None
-                                        }
-                                    };
-
+                                    Ok(bytes) => Some(bytes),
+                                    Err(e) => {
+                                        eprintln!("读取响应失败:{:?}", e.to_string());
+                                        None
+                                    }
+                                };
 
                                 if verbose {
                                     let body_bytes_clone = body_bytes.clone();
-                                    let buffer = String::from_utf8(body_bytes_clone.expect("none").to_vec()).expect("无法转换响应体为字符串");
+                                    let buffer =
+                                        String::from_utf8(body_bytes_clone.expect("none").to_vec())
+                                            .expect("无法转换响应体为字符串");
                                     println!("{:+?}", buffer);
                                 }
                                 // 如果需要断言
-                                if let Some(assert_options) = &*assert_options_clone{
+                                if let Some(assert_options) = &*assert_options_clone {
                                     // 将响应体解析成字节码
-                                    let body_bytes = match body_bytes{
+                                    let body_bytes = match body_bytes {
                                         None => {
                                             eprintln!("响应body为空，无法使用jsonpath获取到数据");
-                                            continue
+                                            continue;
                                         }
-                                        Some(bytes) =>{
-                                            bytes
-                                        }
+                                        Some(bytes) => bytes,
                                     };
                                     // 多断言
                                     for assert_option in assert_options {
-                                        let json_value: Value = match serde_json::from_slice(&*body_bytes) {
-                                            Err(e) =>{
-                                                eprintln!("JSONPath 查询失败: {}", e);
-                                                break;
-                                            }
-                                            Ok(val) => {
-                                                val
-                                            }
-                                        };
+                                        let json_value: Value =
+                                            match serde_json::from_slice(&*body_bytes) {
+                                                Err(e) => {
+                                                    eprintln!("JSONPath 查询失败: {}", e);
+                                                    break;
+                                                }
+                                                Ok(val) => val,
+                                            };
                                         // 通过jsonpath提取数据
                                         match select(&json_value, &*assert_option.jsonpath) {
                                             Ok(results) => {
-                                                if results.is_empty(){
+                                                if results.is_empty() {
                                                     eprintln!("没有匹配到任何结果");
                                                     break;
                                                 }
-                                                if results.len() >1{
+                                                if results.len() > 1 {
                                                     eprintln!("匹配到多个值，无法进行断言");
                                                     break;
                                                 }
                                                 // 取出匹配到的唯一值
-                                                if let Some(result) = results.get(0).map(|&v|v) {
-                                                    if *result != assert_option.reference_object{
+                                                if let Some(result) = results.get(0).map(|&v| v) {
+                                                    if *result != assert_option.reference_object {
                                                         // 断言失败， 失败次数+1
                                                         *err_count_clone.lock().await += 1;
                                                         // 将失败情况加入到一个容器中
@@ -304,14 +305,13 @@ pub async fn run(
                                                         break;
                                                     }
                                                 }
-                                            },
+                                            }
                                             Err(e) => {
                                                 eprintln!("JSONPath 查询失败: {}", e);
                                                 break;
-                                            },
+                                            }
                                         }
                                     }
-
                                 }
 
                                 // 正确统计+1
@@ -323,15 +323,19 @@ pub async fn run(
                                 let status_code = u16::from(response.status());
                                 let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
                                 let url = response.url().to_string();
-                                http_errors_clone.lock().await.increment(status_code, err_msg, url).await;
+                                http_errors_clone
+                                    .lock()
+                                    .await
+                                    .increment(status_code, err_msg, url)
+                                    .await;
                             }
                         }
-                    },
+                    }
                     // 请求失败，如果有状态码，就记录
                     Err(e) => {
                         *err_count_clone.lock().await += 1;
                         let status_code: u16;
-                        match e.status(){
+                        match e.status() {
                             None => {
                                 status_code = 0;
                             }
@@ -340,7 +344,11 @@ pub async fn run(
                             }
                         }
                         let err_msg = e.to_string();
-                        http_errors_clone.lock().await.increment(status_code, err_msg, url_string).await;
+                        http_errors_clone
+                            .lock()
+                            .await
+                            .increment(status_code, err_msg, url_string)
+                            .await;
                     }
                 }
             }
@@ -373,22 +381,23 @@ pub async fn run(
                 let successful_requests = *successful_requests_clone.lock().await as f64;
                 let success_rate = (total_requests - err_count as f64) / total_requests * 100.0;
                 let histogram = histogram_clone.lock().await;
-                let total_response_size_kb = *total_response_size_clone.lock().await as f64 / 1024.0;
+                let total_response_size_kb =
+                    *total_response_size_clone.lock().await as f64 / 1024.0;
                 let throughput_kb_s = total_response_size_kb / total_duration;
                 let http_errors = http_errors_clone.lock().await.errors.clone();
                 let assert_errors = assert_error_clone.lock().await.errors.clone();
                 let rps = successful_requests / total_duration;
-                let resp_median_line = match  histogram.percentile(50.0){
+                let resp_median_line = match histogram.percentile(50.0) {
                     Ok(bucket) => *bucket.range().start(),
-                    Err(_) =>0
+                    Err(_) => 0,
                 };
-                let resp_95_line = match  histogram.percentile(95.0){
+                let resp_95_line = match histogram.percentile(95.0) {
                     Ok(bucket) => *bucket.range().start(),
-                    Err(_) =>0
+                    Err(_) => 0,
                 };
-                let resp_99_line = match  histogram.percentile(99.0){
+                let resp_99_line = match histogram.percentile(99.0) {
                     Ok(bucket) => *bucket.range().start(),
-                    Err(_) =>0
+                    Err(_) => 0,
                 };
                 let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
                     Ok(n) => n.as_millis(),
@@ -401,7 +410,7 @@ pub async fn run(
                     queue.pop_front();
                 }
                 // 添加新结果
-                queue.push_back(TestResult{
+                queue.push_back(TestResult {
                     total_duration,
                     success_rate,
                     median_response_time: resp_median_line,
@@ -410,9 +419,9 @@ pub async fn run(
                     total_requests: total_requests as i32,
                     rps,
                     max_response_time: max_response_time_c,
-                    min_response_time:min_response_time_c,
+                    min_response_time: min_response_time_c,
                     err_count,
-                    total_data_kb:total_response_size_kb,
+                    total_data_kb: total_response_size_kb,
                     throughput_per_second_kb: throughput_kb_s,
                     http_errors: http_errors.lock().await.clone(),
                     timestamp,
@@ -452,8 +461,8 @@ pub async fn run(
         rps: successful_requests / test_duration_secs as f64,
         max_response_time: *max_response_time.lock().await,
         min_response_time: *min_response_time.lock().await,
-        err_count:*err_count_clone.lock().await,
-        total_data_kb:total_response_size_kb,
+        err_count: *err_count_clone.lock().await,
+        total_data_kb: total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().await.clone(),
         timestamp,

@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use crate::models::assert_option::AssertOption;
 use crate::models::setup::SetupApiEndpoint;
-
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ThinkTime{
+pub struct ThinkTime {
     pub min_millis: u64,
     pub max_millis: u64,
 }

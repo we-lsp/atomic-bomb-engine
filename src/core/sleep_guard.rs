@@ -38,9 +38,7 @@ impl SleepGuard {
 
     #[cfg(target_os = "macos")]
     fn prevent_sleep(&mut self) {
-        let process = Command::new("caffeinate")
-            .spawn()
-            .ok();
+        let process = Command::new("caffeinate").spawn().ok();
         self.process = process;
     }
 
