@@ -120,7 +120,12 @@ pub async fn start_setup(
                         let key = jsonpath_obj.key;
                         // 将响应转换为json
                         let json_value: Value = match serde_json::from_slice(&*body_bytes) {
-                            Err(e) => return Err(Error::msg(format!("转换json失败:{:?}", e))),
+                            Err(e) => {
+                                return Err(Error::msg(format!(
+                                    "转换json失败:{:?}, 原始json: {:?}",
+                                    e, body_bytes
+                                )))
+                            }
                             Ok(val) => val,
                         };
                         // 通过jsonpath提取数据

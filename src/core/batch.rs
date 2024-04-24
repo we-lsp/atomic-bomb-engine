@@ -407,7 +407,10 @@ pub async fn batch(
                                 match Value::from_str(&*json_string) {
                                     Ok(val) => val,
                                     Err(e) => {
-                                        return Err(Error::msg(format!("转换json失败:{:?}", e)))
+                                        return Err(Error::msg(format!(
+                                            "转换json失败:{:?}, 原始json: {:?}",
+                                            e, json_string
+                                        )))
                                     }
                                 }
                             }
