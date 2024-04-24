@@ -300,7 +300,7 @@ pub async fn batch(
                             }
                             Err(e) => {
                                 return Err(Error::msg(format!(
-                                    "接口-{:?}初始化失败: {:?}",
+                                    "接口-{:?}初始化失败,v-user停止运行!!: {:?}",
                                     api_name_clone.clone(),
                                     e
                                 )))
