@@ -299,6 +299,8 @@ pub async fn batch(
                                 };
                             }
                             Err(e) => {
+                                *api_concurrent_number_clone.lock().await -= 1;
+                                *concurrent_number_clone.lock().await -= 1;
                                 return Err(Error::msg(format!(
                                     "接口-{:?}初始化失败,v-user停止运行!!: {:?}",
                                     api_name_clone.clone(),
