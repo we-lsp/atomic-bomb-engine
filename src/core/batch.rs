@@ -115,11 +115,11 @@ pub async fn batch(
     let client = match timeout_secs > 0 {
         true => match builder.timeout(Duration::from_secs(timeout_secs)).build() {
             Ok(cli) => cli,
-            Err(e) => return Err(Error::msg(format!("构建含有超时的http客户端失败:{:?}", e))),
+            Err(e) => return Err(Error::msg(format!("构建含有超时的http客户端失败: {:?}", e))),
         },
         false => match builder.build() {
             Ok(cli) => cli,
-            Err(e) => return Err(Error::msg(format!("构建http客户端失败:{:?}", e))),
+            Err(e) => return Err(Error::msg(format!("构建http客户端失败: {:?}", e))),
         },
     };
     // 开始初始化
@@ -131,7 +131,7 @@ pub async fn batch(
                     extract_map.extend(extract);
                 };
             }
-            Err(e) => return Err(Error::msg(format!("全局初始化失败:{:?}", e))),
+            Err(e) => return Err(Error::msg(format!("全局初始化失败: {:?}", e))),
         };
     };
     // println!("extract_map:{:?}", extract_map);
@@ -300,7 +300,7 @@ pub async fn batch(
                             }
                             Err(e) => {
                                 return Err(Error::msg(format!(
-                                    "接口-{:?}初始化失败:{:?}",
+                                    "接口-{:?}初始化失败: {:?}",
                                     api_name_clone.clone(),
                                     e
                                 )))
