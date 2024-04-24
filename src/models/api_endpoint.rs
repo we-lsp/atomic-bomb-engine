@@ -15,7 +15,6 @@ pub struct ApiEndpoint {
     pub name: String,
     pub url: String,
     pub method: String,
-    pub timeout_secs: u64,
     pub weight: u32,
     pub json: Option<Value>,
     pub form_data: Option<HashMap<String, String>>,

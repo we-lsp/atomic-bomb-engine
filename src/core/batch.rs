@@ -5,12 +5,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Error};
+use anyhow::Error;
 use futures::future::join_all;
 use futures::stream::StreamExt;
 use handlebars::Handlebars;
 use histogram::Histogram;
-use jsonpath_lib::select;
 use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
@@ -23,9 +22,9 @@ use tokio::time::interval;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
-use crate::core::listening_assert;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::status_share::{RESULTS_QUEUE, RESULTS_SHOULD_STOP};
+use crate::core::{listening_assert, setup};
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::assert_task::AssertTask;
@@ -37,6 +36,8 @@ use crate::models::step_option::{InnerStepOption, StepOption};
 pub async fn batch(
     test_duration_secs: u64,
     concurrent_requests: usize,
+    timeout_secs: u64,
+    cookie_store_enable: bool,
     verbose: bool,
     should_prevent: bool,
     api_endpoints: Vec<ApiEndpoint>,
@@ -103,170 +104,37 @@ pub async fn batch(
     let (tx_assert, rx_assert) = mpsc::channel(assert_channel_buffer_size);
     // 开启一个任务，做断言的生产消费
     tokio::spawn(listening_assert::listening_assert(rx_assert));
+    // 创建http客户端
+    let builder = Client::builder()
+        .cookie_store(cookie_store_enable)
+        .default_headers({
+            let mut headers = HeaderMap::new();
+            headers.insert(USER_AGENT, user_agent_value.parse()?);
+            headers
+        });
+    let client = match timeout_secs > 0 {
+        true => match builder.timeout(Duration::from_secs(timeout_secs)).build() {
+            Ok(cli) => cli,
+            Err(e) => return Err(Error::msg(format!("构建含有超时的http客户端失败:{:?}", e))),
+        },
+        false => match builder.build() {
+            Ok(cli) => cli,
+            Err(e) => return Err(Error::msg(format!("构建http客户端失败:{:?}", e))),
+        },
+    };
     // 开始初始化
     if let Some(setup_options) = setup_options {
         is_need_render_template = true;
-        for option in setup_options {
-            let builder = Client::builder()
-                .cookie_store(option.cookie_store_enable)
-                .default_headers({
-                    let mut headers = reqwest::header::HeaderMap::new();
-                    headers.insert(USER_AGENT, user_agent_value.parse()?);
-                    headers
-                });
-            // 如果有超时时间就将client设置
-            let client = match option.timeout_secs > 0 {
-                true => builder
-                    .timeout(Duration::from_secs(option.timeout_secs))
-                    .build()
-                    .context("构建带超时的http客户端失败")?,
-                false => builder.build().context("构建http客户端失败")?,
-            };
-            // 构建请求方式
-            let method = Method::from_str(&option.method.to_uppercase())
-                .map_err(|_| Error::msg("构建请求方法失败"))?;
-            // 构建请求
-            let mut request = client.request(method, option.url);
-            // 构建请求头
-            let mut headers = HeaderMap::new();
-            if let Some(headers_map) = option.headers {
-                headers.extend(headers_map.iter().map(|(k, v)| {
-                    let header_name = k.parse::<HeaderName>().expect("无效的header名称");
-                    let header_value = v.parse::<HeaderValue>().expect("无效的header值");
-                    (header_name, header_value)
-                }));
-            }
-            // 构建cookies
-            if let Some(ref c) = option.cookies {
-                match HeaderValue::from_str(c) {
-                    Ok(h) => {
-                        headers.insert(COOKIE, h);
-                    }
-                    Err(e) => return Err(Error::msg(format!("设置cookie失败:{:?}", e))),
-                }
-            }
-            // 将header替换
-            headers.iter_mut().for_each(|(_key, value)| {
-                let handlebars = Handlebars::new();
-                let new_val = match handlebars
-                    .render_template(value.to_str().unwrap(), &json!(extract_map))
-                {
-                    Ok(v) => {
-                        let header_value = v.parse::<HeaderValue>().expect("无效的header值");
-                        header_value
-                    }
-                    Err(e) => {
-                        eprintln!("{:?}", e);
-                        value.clone()
-                    }
+        match setup::start_setup(setup_options, extract_map.clone(), client.clone()).await {
+            Ok(res) => {
+                if let Some(extract) = res {
+                    extract_map.extend(extract);
                 };
-                *value = new_val;
-            });
-            request = request.headers(headers);
-            // 构建json请求
-            if let Some(json_value) = option.json {
-                let handlebars = Handlebars::new();
-                let json_string = match handlebars
-                    .render_template(&*json_value.to_string(), &json!(extract_map))
-                {
-                    Ok(j) => j,
-                    Err(e) => {
-                        eprintln!("{:?}", e);
-                        json_value.to_string()
-                    }
-                };
-                // println!("{:?}",json_string);
-                let json_val = match Value::from_str(&*json_string) {
-                    Ok(val) => val,
-                    Err(e) => return Err(Error::msg(format!("转换json失败:{:?}", e))),
-                };
-                request = request.json(&json_val);
             }
-            // 构建form表单
-            if let Some(mut form_data) = option.form_data {
-                form_data.iter_mut().for_each(|(_key, value)| {
-                    let handlebars = Handlebars::new();
-                    let new_val = match handlebars.render_template(value, &json!(extract_map)) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            eprintln!("{:?}", e);
-                            value.to_string()
-                        }
-                    };
-                    *value = new_val;
-                });
-                request = request.form(&form_data);
-            };
-            // 发送请求
-            match request.send().await {
-                Ok(response) => {
-                    // 需要通过jsonpath提取数据
-                    if let Some(json_path_vec) = option.jsonpath_extract {
-                        // 响应流
-                        let mut stream = response.bytes_stream();
-                        // 响应体
-                        let mut body_bytes = Vec::new();
-                        while let Some(item) = stream.next().await {
-                            match item {
-                                Ok(chunk) => {
-                                    // 获取当前的chunk
-                                    body_bytes.extend_from_slice(&chunk);
-                                }
-                                Err(e) => {
-                                    { Err(Error::msg(format!("获取响应流失败:{:?}", e))) }?
-                                }
-                            };
-                        }
-                        for jsonpath_obj in json_path_vec {
-                            let jsonpath = jsonpath_obj.jsonpath;
-                            let key = jsonpath_obj.key;
-                            // 将响应转换为json
-                            let json_value: Value = match serde_json::from_slice(&*body_bytes) {
-                                Err(e) => return Err(Error::msg(format!("转换json失败:{:?}", e))),
-                                Ok(val) => val,
-                            };
-                            // 通过jsonpath提取数据
-                            match select(&json_value, &jsonpath) {
-                                Ok(results) => {
-                                    if results.is_empty() {
-                                        return Err(Error::msg(
-                                            "初始化失败::jsonpath没有匹配到任何值",
-                                        ));
-                                    }
-                                    if results.len() > 1 {
-                                        return Err(Error::msg(
-                                            "初始化失败::jsonpath匹配的不是唯一值",
-                                        ));
-                                    }
-                                    // 取出匹配到的唯一值
-                                    if let Some(result) = results.get(0).map(|&v| v) {
-                                        // 检查key是否冲突
-                                        if extract_map.contains_key(&key) {
-                                            return Err(Error::msg(format!(
-                                                "初始化失败::key {:?}冲突",
-                                                key
-                                            )));
-                                        }
-                                        // 将key设置到字典中
-                                        extract_map.insert(key.clone(), result.clone());
-                                    }
-                                }
-                                Err(e) => {
-                                    return Err(Error::msg(format!(
-                                        "jsonpath提取数据失败::{:?}",
-                                        e
-                                    )))
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    return Err(Error::msg(format!("初始化失败:{:?}", err)));
-                }
-            }
-        }
-    }
+            Err(e) => return Err(Error::msg(format!("全局初始化失败:{:?}", e))),
+        };
+    };
+    // println!("extract_map:{:?}", extract_map);
     // 并发安全的提取字典
     let extract_map_arc = Arc::new(Mutex::new(extract_map));
     // 针对每一个接口开始配置
@@ -392,31 +260,14 @@ pub async fn batch(
             let http_errors_clone = http_errors.clone();
             // results副本
             let results_clone = results_arc.clone();
-            // user-agent副本
-            let user_agent_clone = user_agent_value.clone();
-            // 构建http客户端
-            let client_builder = Client::builder().
-                    cookie_store(true).     // 保持所有请求的cookie
-                    default_headers({      // 默认请求头
-                            let mut headers = reqwest::header::HeaderMap::new();
-                            headers.insert(USER_AGENT, user_agent_clone.parse()?);
-                            headers
-                        });
-            let timeout_secs = endpoint_clone.lock().await.timeout_secs;
-            // 如果有超时时间就将client设置
-            let client = match timeout_secs > 0 {
-                true => client_builder
-                    .timeout(Duration::from_secs(timeout_secs))
-                    .build()
-                    .context("构建带超时的http客户端失败")?,
-                false => client_builder.build().context("构建http客户端失败")?,
-            };
             // 并发控制器副本
             let controller_clone = controller.clone();
             // 全局提取字典副本
             let extract_map_arc_clone = Arc::clone(&extract_map_arc);
             // 断言通道副本
             let tx_assert_clone = tx_assert.clone();
+            // http客户端副本
+            let client_clone = client.clone();
             // 开启并发
             let handle: JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 let semaphore = controller_clone.get_semaphore();
@@ -435,175 +286,20 @@ pub async fn batch(
                     // 接口前置初始化
                     if let Some(setup_options) = api_setup_clone {
                         is_need_render_template = true;
-                        for option in setup_options {
-                            // 构建请求方式
-                            let method = Method::from_str(&option.method.to_uppercase())
-                                .map_err(|_| Error::msg("构建请求方法失败"))?;
-                            // 构建请求
-                            let mut request = client.request(method, option.url);
-                            // 构建请求头
-                            let mut headers = HeaderMap::new();
-                            // headers.insert(USER_AGENT, user_agent_clone.parse()?);
-                            if let Some(headers_map) = option.headers {
-                                headers.extend(headers_map.iter().map(|(k, v)| {
-                                    let header_name =
-                                        k.parse::<HeaderName>().expect("无效的header名称");
-                                    let header_value =
-                                        v.parse::<HeaderValue>().expect("无效的header值");
-                                    (header_name, header_value)
-                                }));
-                            }
-                            // 构建cookies
-                            if let Some(ref c) = option.cookies {
-                                match HeaderValue::from_str(c) {
-                                    Ok(h) => {
-                                        headers.insert(COOKIE, h);
-                                    }
-                                    Err(e) => {
-                                        return Err(Error::msg(format!("设置cookie失败:{:?}", e)))
-                                    }
-                                }
-                            }
-                            // 将header替换
-                            headers.iter_mut().for_each(|(_key, value)| {
-                                let handlebars = Handlebars::new();
-                                let new_val = match handlebars.render_template(
-                                    value.to_str().unwrap(),
-                                    &json!(api_extract_b_tree_map),
-                                ) {
-                                    Ok(v) => {
-                                        let header_value =
-                                            v.parse::<HeaderValue>().expect("无效的header值");
-                                        header_value
-                                    }
-                                    Err(e) => {
-                                        eprintln!("{:?}", e);
-                                        value.clone()
-                                    }
+                        match setup::start_setup(
+                            setup_options,
+                            api_extract_b_tree_map.clone(),
+                            client_clone.clone(),
+                        )
+                        .await
+                        {
+                            Ok(res) => {
+                                if let Some(extract) = res {
+                                    api_extract_b_tree_map.extend(extract);
                                 };
-                                *value = new_val;
-                            });
-                            request = request.headers(headers);
-                            // 构建json请求
-                            if let Some(json_value) = option.json {
-                                let handlebars = Handlebars::new();
-                                let json_string = match handlebars.render_template(
-                                    &*json_value.to_string(),
-                                    &json!(api_extract_b_tree_map),
-                                ) {
-                                    Ok(j) => j,
-                                    Err(e) => {
-                                        eprintln!("{:?}", e);
-                                        json_value.to_string()
-                                    }
-                                };
-                                // println!("{:?}",json_string);
-                                let json_val = match Value::from_str(&*json_string) {
-                                    Ok(val) => val,
-                                    Err(e) => {
-                                        return Err(Error::msg(format!("转换json失败:{:?}", e)))
-                                    }
-                                };
-                                request = request.json(&json_val);
                             }
-                            // 构建form表单
-                            if let Some(mut form_data) = option.form_data {
-                                form_data.iter_mut().for_each(|(_key, value)| {
-                                    let handlebars = Handlebars::new();
-                                    let new_val = match handlebars
-                                        .render_template(value, &json!(api_extract_b_tree_map))
-                                    {
-                                        Ok(v) => v,
-                                        Err(e) => {
-                                            eprintln!("{:?}", e);
-                                            value.to_string()
-                                        }
-                                    };
-                                    *value = new_val;
-                                });
-                                request = request.form(&form_data);
-                            };
-                            // 发送请求
-                            match request.send().await {
-                                Ok(response) => {
-                                    // 需要通过jsonpath提取数据
-                                    if let Some(json_path_vec) = option.jsonpath_extract {
-                                        // 响应流
-                                        let mut stream = response.bytes_stream();
-                                        // 响应体
-                                        let mut body_bytes = Vec::new();
-                                        while let Some(item) = stream.next().await {
-                                            match item {
-                                                Ok(chunk) => {
-                                                    // 获取当前的chunk
-                                                    body_bytes.extend_from_slice(&chunk);
-                                                }
-                                                Err(e) => {
-                                                    Err(Error::msg(format!(
-                                                        "获取响应流失败:{:?}",
-                                                        e
-                                                    )))
-                                                }?,
-                                            };
-                                        }
-                                        for jsonpath_obj in json_path_vec {
-                                            let jsonpath = jsonpath_obj.jsonpath;
-                                            let key = jsonpath_obj.key;
-                                            // 将响应转换为json
-                                            let json_value: Value =
-                                                match serde_json::from_slice(&*body_bytes) {
-                                                    Err(e) => {
-                                                        return Err(Error::msg(format!(
-                                                            "转换json失败:{:?}",
-                                                            e
-                                                        )))
-                                                    }
-                                                    Ok(val) => val,
-                                                };
-                                            // 通过jsonpath提取数据
-                                            match select(&json_value, &jsonpath) {
-                                                Ok(results) => {
-                                                    if results.is_empty() {
-                                                        return Err(Error::msg(
-                                                            "初始化失败::jsonpath没有匹配到任何值",
-                                                        ));
-                                                    }
-                                                    if results.len() > 1 {
-                                                        return Err(Error::msg(
-                                                            "初始化失败::jsonpath匹配的不是唯一值",
-                                                        ));
-                                                    }
-                                                    // 取出匹配到的唯一值
-                                                    if let Some(result) = results.get(0).map(|&v| v)
-                                                    {
-                                                        // 检查key是否冲突
-                                                        if api_extract_b_tree_map.contains_key(&key)
-                                                        {
-                                                            return Err(Error::msg(format!(
-                                                                "初始化失败::key {:?}冲突",
-                                                                key
-                                                            )));
-                                                        }
-                                                        // 将key设置到字典中
-                                                        api_extract_b_tree_map
-                                                            .insert(key.clone(), result.clone());
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    return Err(Error::msg(format!(
-                                                        "jsonpath提取数据失败::{:?}",
-                                                        e
-                                                    )))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    return Err(Error::msg(format!("初始化失败:{:?}", err)));
-                                }
-                            }
-                        }
+                            Err(e) => return Err(Error::msg(format!("全局初始化失败:{:?}", e))),
+                        };
                     }
                     // 总请求数
                     *total_requests_clone.lock().await += 1;
@@ -627,7 +323,7 @@ pub async fn batch(
                     let method = Method::from_str(&method_clone.to_uppercase())
                         .map_err(|_| Error::msg("构建请求方法失败"))?;
                     // 构建请求
-                    let mut request = client.request(method, api_url_clone.clone());
+                    let mut request = client_clone.request(method, api_url_clone.clone());
                     // 构建请求头
                     let mut headers = HeaderMap::new();
                     // headers.insert(USER_AGENT, user_agent_clone.parse()?);
@@ -1317,7 +1013,6 @@ mod tests {
             name: "有断言".to_string(),
             url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
             method: "GET".to_string(),
-            timeout_secs: 10,
             weight: 1,
             json: None,
             form_data: None,
@@ -1371,41 +1066,17 @@ mod tests {
             name: "初始化-1".to_string(),
             url: "https://ooooo.run/api/short/v1/list".to_string(),
             method: "get".to_string(),
-            timeout_secs: 10,
             json: None,
             form_data: None,
             headers: None,
             cookies: None,
             jsonpath_extract: Some(jsonpath_extracts),
-            cookie_store_enable: true,
         });
-        // endpoints.push(ApiEndpoint{
-        //     name: "无断言1".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "GET".to_string(),
-        //     timeout_secs: 10,
-        //     weight: 3,
-        //     json: Some(json!("{code: 400, data: null, msg: \"没有做替换的\", success: false}")),
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: Some("bbbbb".to_string()),
-        //     assert_options: None,
-        // });
-        // endpoints.push(ApiEndpoint{
-        //     name: "无断言2".to_string(),
-        //     url: "http://127.0.0.1:8000/a".to_string(),
-        //     method: "POST".to_string(),
-        //     timeout_secs: 10,
-        //     weight: 3,
-        //     json: Some(json!({"number": "{{test-code}}", "name": "{{test-msg}}"})),
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: Some("aaaaa-{{test}}".to_string()),
-        //     assert_options: None,
-        // });
         match batch(
             5,
             100,
+            10,
+            true,
             false,
             true,
             endpoints,
