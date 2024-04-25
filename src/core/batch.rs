@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::error::Error as std_error;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -676,19 +677,6 @@ pub async fn batch(
                                     *err_count_clone.lock().await += 1;
                                     *api_err_count_clone.lock().await += 1;
                                     let status_code = u16::from(response.status());
-                                    let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
-                                    let url = response.url().to_string();
-                                    http_errors_clone
-                                        .lock()
-                                        .await
-                                        .increment(status_code, err_msg, url)
-                                        .await;
-                                    if verbose {
-                                        println!(
-                                            "{:?}-HTTP 错误: 状态码 {:?}",
-                                            api_name_clone, status_code
-                                        )
-                                    }
                                     let mut api_histogram = api_histogram_clone.lock().await;
                                     // 最大请求时间
                                     let mut max_rt = max_response_time_clone.lock().await;
@@ -761,12 +749,10 @@ pub async fn batch(
                                             }
                                         };
                                     }
-                                    if verbose {
-                                        let body_bytes_clone = body_bytes.clone();
-                                        let buffer = String::from_utf8(body_bytes_clone)
-                                            .expect("无法转换响应体为字符串");
-                                        println!("{:+?}", buffer);
-                                    }
+                                    let body_bytes_clone = body_bytes.clone();
+                                    let buffer = String::from_utf8(body_bytes_clone)
+                                        .expect("无法转换响应体为字符串");
+                                    eprintln!("{:+?}", buffer);
                                     let api_total_data_bytes =
                                         *api_total_response_size_clone.lock().await;
                                     let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
@@ -781,6 +767,22 @@ pub async fn batch(
                                         * 100.0;
                                     let throughput_per_second_kb = api_total_data_kb
                                         / (Instant::now() - test_start).as_secs_f64();
+                                    let err_msg = format!(
+                                        "HTTP 错误: 状态码 {:?}, body:{:?}",
+                                        status_code, buffer
+                                    );
+                                    let url = api_url_clone.clone();
+                                    http_errors_clone
+                                        .lock()
+                                        .await
+                                        .increment(status_code, err_msg, url)
+                                        .await;
+                                    if verbose {
+                                        println!(
+                                            "{:?}-HTTP 错误: 状态码 {:?}, 响应体：{:?}",
+                                            api_name_clone, status_code, buffer
+                                        )
+                                    }
                                     // 给结果赋值
                                     let mut api_res = api_result_clone.lock().await;
                                     api_res.response_time_95 =
@@ -828,11 +830,21 @@ pub async fn batch(
                                     status_code = u16::from(code);
                                 }
                             }
-                            let err_msg = e.to_string();
+
+                            let err = dbg!(e);
+                            let err_source = match err.source() {
+                                None => "None".to_string(),
+                                Some(source) => source.to_string(),
+                            };
+                            let err_msg = format!(
+                                "http请求错误:{:?}, source:{:?}",
+                                err.to_string(),
+                                err_source
+                            );
                             http_errors_clone
                                 .lock()
                                 .await
-                                .increment(status_code, err_msg, api_url_clone.clone())
+                                .increment(status_code, err_msg.to_string(), api_url_clone.clone())
                                 .await;
                         }
                     }
