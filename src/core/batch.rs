@@ -622,52 +622,55 @@ pub async fn batch(
                                         }
                                     };
                                     // 给结果赋值
-                                    let api_total_data_bytes =
-                                        *api_total_response_size_clone.lock().await;
-                                    let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                                    let api_total_requests =
-                                        api_total_requests_clone.lock().await.clone();
-                                    let api_success_requests =
-                                        api_successful_requests_clone.lock().await.clone();
-                                    let api_rps = api_total_requests as f64
-                                        / (Instant::now() - test_start).as_secs_f64();
-                                    let api_success_rate = api_success_requests as f64
-                                        / api_total_requests as f64
-                                        * 100.0;
-                                    let throughput_per_second_kb = api_total_data_kb
-                                        / (Instant::now() - test_start).as_secs_f64();
+                                    {
+                                        let api_total_data_bytes =
+                                            *api_total_response_size_clone.lock().await;
+                                        let api_total_data_kb =
+                                            api_total_data_bytes as f64 / 1024f64;
+                                        let api_total_requests =
+                                            api_total_requests_clone.lock().await.clone();
+                                        let api_success_requests =
+                                            api_successful_requests_clone.lock().await.clone();
+                                        let api_rps = api_total_requests as f64
+                                            / (Instant::now() - test_start).as_secs_f64();
+                                        let api_success_rate = api_success_requests as f64
+                                            / api_total_requests as f64
+                                            * 100.0;
+                                        let throughput_per_second_kb = api_total_data_kb
+                                            / (Instant::now() - test_start).as_secs_f64();
 
-                                    let mut api_res = api_result_clone.lock().await;
-                                    api_res.response_time_95 =
-                                        *api_histogram.percentile(95.0)?.range().start();
-                                    api_res.response_time_99 =
-                                        *api_histogram.percentile(99.0)?.range().start();
-                                    api_res.median_response_time =
-                                        *api_histogram.percentile(50.0)?.range().start();
-                                    api_res.max_response_time = *api_max_rt;
-                                    api_res.min_response_time = *api_min_rt;
-                                    api_res.total_requests = api_total_requests;
-                                    api_res.total_data_kb = api_total_data_kb;
-                                    api_res.rps = api_rps;
-                                    api_res.success_rate = api_success_rate;
-                                    api_res.err_count = *api_err_count_clone.lock().await;
-                                    api_res.throughput_per_second_kb = throughput_per_second_kb;
-                                    api_res.error_rate = api_res.err_count as f64
-                                        / api_res.total_requests as f64
-                                        * 100.0;
-                                    api_res.method = method_clone.clone().to_uppercase();
-                                    api_res.concurrent_number =
-                                        *api_concurrent_number_clone.lock().await;
-                                    // 向最终结果中添加数据
-                                    let mut res = results_clone.lock().await;
-                                    match index < res.len() {
-                                        true => {
-                                            res[index] = api_res.clone();
-                                        }
-                                        false => {
-                                            eprintln!("results索引越界");
-                                        }
-                                    };
+                                        let mut api_res = api_result_clone.lock().await;
+                                        api_res.response_time_95 =
+                                            *api_histogram.percentile(95.0)?.range().start();
+                                        api_res.response_time_99 =
+                                            *api_histogram.percentile(99.0)?.range().start();
+                                        api_res.median_response_time =
+                                            *api_histogram.percentile(50.0)?.range().start();
+                                        api_res.max_response_time = *api_max_rt;
+                                        api_res.min_response_time = *api_min_rt;
+                                        api_res.total_requests = api_total_requests;
+                                        api_res.total_data_kb = api_total_data_kb;
+                                        api_res.rps = api_rps;
+                                        api_res.success_rate = api_success_rate;
+                                        api_res.err_count = *api_err_count_clone.lock().await;
+                                        api_res.throughput_per_second_kb = throughput_per_second_kb;
+                                        api_res.error_rate = api_res.err_count as f64
+                                            / api_res.total_requests as f64
+                                            * 100.0;
+                                        api_res.method = method_clone.clone().to_uppercase();
+                                        api_res.concurrent_number =
+                                            *api_concurrent_number_clone.lock().await;
+                                        // 向最终结果中添加数据
+                                        let mut res = results_clone.lock().await;
+                                        match index < res.len() {
+                                            true => {
+                                                res[index] = api_res.clone();
+                                            }
+                                            false => {
+                                                eprintln!("results索引越界");
+                                            }
+                                        };
+                                    }
                                     // println!("res:{:?}", res);
                                 }
                                 // 状态码错误
@@ -749,10 +752,13 @@ pub async fn batch(
                                             }
                                         };
                                     }
+                                    // 响应体副本
                                     let body_bytes_clone = body_bytes.clone();
+                                    // 将bytes转换为string
                                     let buffer = String::from_utf8(body_bytes_clone)
                                         .expect("无法转换响应体为字符串");
                                     eprintln!("{:+?}", buffer);
+                                    // 获取需要等待的对象
                                     let api_total_data_bytes =
                                         *api_total_response_size_clone.lock().await;
                                     let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
@@ -784,37 +790,39 @@ pub async fn batch(
                                         )
                                     }
                                     // 给结果赋值
-                                    let mut api_res = api_result_clone.lock().await;
-                                    api_res.response_time_95 =
-                                        *api_histogram.percentile(95.0)?.range().start();
-                                    api_res.response_time_99 =
-                                        *api_histogram.percentile(99.0)?.range().start();
-                                    api_res.median_response_time =
-                                        *api_histogram.percentile(50.0)?.range().start();
-                                    api_res.max_response_time = *api_max_rt;
-                                    api_res.min_response_time = *api_min_rt;
-                                    api_res.total_requests = api_total_requests;
-                                    api_res.total_data_kb = api_total_data_kb;
-                                    api_res.rps = api_rps;
-                                    api_res.success_rate = api_success_rate;
-                                    api_res.err_count = *api_err_count_clone.lock().await;
-                                    api_res.throughput_per_second_kb = throughput_per_second_kb;
-                                    api_res.error_rate = api_res.err_count as f64
-                                        / api_res.total_requests as f64
-                                        * 100.0;
-                                    api_res.method = method_clone.clone().to_uppercase();
-                                    api_res.concurrent_number =
-                                        *api_concurrent_number_clone.lock().await;
-                                    // 向最终结果中添加数据
-                                    let mut res = results_clone.lock().await;
-                                    match index < res.len() {
-                                        true => {
-                                            res[index] = api_res.clone();
-                                        }
-                                        false => {
-                                            eprintln!("results索引越界");
-                                        }
-                                    };
+                                    {
+                                        let mut api_res = api_result_clone.lock().await;
+                                        api_res.response_time_95 =
+                                            *api_histogram.percentile(95.0)?.range().start();
+                                        api_res.response_time_99 =
+                                            *api_histogram.percentile(99.0)?.range().start();
+                                        api_res.median_response_time =
+                                            *api_histogram.percentile(50.0)?.range().start();
+                                        api_res.max_response_time = *api_max_rt;
+                                        api_res.min_response_time = *api_min_rt;
+                                        api_res.total_requests = api_total_requests;
+                                        api_res.total_data_kb = api_total_data_kb;
+                                        api_res.rps = api_rps;
+                                        api_res.success_rate = api_success_rate;
+                                        api_res.err_count = *api_err_count_clone.lock().await;
+                                        api_res.throughput_per_second_kb = throughput_per_second_kb;
+                                        api_res.error_rate = api_res.err_count as f64
+                                            / api_res.total_requests as f64
+                                            * 100.0;
+                                        api_res.method = method_clone.clone().to_uppercase();
+                                        api_res.concurrent_number =
+                                            *api_concurrent_number_clone.lock().await;
+                                        // 向最终结果中添加数据
+                                        let mut res = results_clone.lock().await;
+                                        match index < res.len() {
+                                            true => {
+                                                res[index] = api_res.clone();
+                                            }
+                                            false => {
+                                                eprintln!("results索引越界");
+                                            }
+                                        };
+                                    }
                                 }
                             }
                         }
@@ -1033,7 +1041,7 @@ mod tests {
             100,
             10,
             true,
-            false,
+            true,
             true,
             endpoints,
             Option::from(StepOption {
