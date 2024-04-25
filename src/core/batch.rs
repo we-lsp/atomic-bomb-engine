@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::error::Error as std_error;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -827,7 +828,16 @@ pub async fn batch(
                                 }
                             }
 
-                            let err_msg = dbg!(e);
+                            let err = dbg!(e);
+                            let err_source = match err.source() {
+                                None => "None".to_string(),
+                                Some(source) => source.to_string(),
+                            };
+                            let err_msg = format!(
+                                "http请求错误:{:?}, source:{:?}",
+                                err.to_string(),
+                                err_source
+                            );
                             http_errors_clone
                                 .lock()
                                 .await
