@@ -767,7 +767,10 @@ pub async fn batch(
                                         * 100.0;
                                     let throughput_per_second_kb = api_total_data_kb
                                         / (Instant::now() - test_start).as_secs_f64();
-                                    let err_msg = format!("HTTP 错误: 状态码 {}, ", status_code);
+                                    let err_msg = format!(
+                                        "HTTP 错误: 状态码 {:?}, body:{:?}",
+                                        status_code, buffer
+                                    );
                                     let url = api_url_clone.clone();
                                     http_errors_clone
                                         .lock()
