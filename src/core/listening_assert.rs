@@ -18,8 +18,10 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                         *task.api_err_count.lock().await += 1;
                         assertion_failed = true;
                         task.assert_errors.lock().await.increment(
-                            String::from(task.endpoint.lock().await.url.clone()),
-                            format!("{:?}-JSONPath查询失败:{:?}", task.api_name, e)).await;
+                            task.api_name.clone(),
+                            format!("JSONPath查询失败:{:?}", e),
+                            task.endpoint.lock().await.url.clone()
+                        ).await;
                         None
                     }
                     Ok(val) => {
@@ -43,8 +45,10 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                                     *task.err_count.lock().await += 1;
                                     *task.api_err_count.lock().await += 1;
                                     task.assert_errors.lock().await.increment(
-                                        String::from(task.endpoint.lock().await.url.clone()),
-                                        format!("{:?}-JSONPath查询失败:{:?}", task.api_name, "没有匹配到任何结果")).await;
+                            task.api_name.clone(),
+                            "没有匹配到任何结果".to_string(),
+                            task.endpoint.lock().await.url.clone()
+                        ).await;
                                     assertion_failed = true;
                                     break;
                                 }
@@ -55,8 +59,10 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                                     *task.err_count.lock().await += 1;
                                     *task.api_err_count.lock().await += 1;
                                     task.assert_errors.lock().await.increment(
-                                        String::from(task.endpoint.lock().await.url.clone()),
-                                        format!("{:?}-JSONPath查询失败:{:?}", task.api_name, "匹配到多个值，无法进行断言")).await;
+                            task.api_name.clone(),
+                            "匹配到多个值，无法断言".to_string(),
+                            task.endpoint.lock().await.url.clone()
+                        ).await;
                                     assertion_failed = true;
                                     break;
                                 }
@@ -64,15 +70,17 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                                 if let Some(result) = results.get(0).map(|&v|v) {
                                     if *result != assert_option.reference_object{
                                         // 将失败情况加入到一个容器中
-                                        task.assert_errors.
-                                            lock().
-                                            await.
-                                            increment(
-                                                String::from(task.endpoint.lock().await.url.clone()),
-                                                format!(
-                                                    "{:?}-预期结果：{:?}, 实际结果：{:?}", task.api_name, assert_option.reference_object, result
-                                                )
-                                            ).await;
+                                        task
+                                        .assert_errors
+                                        .lock()
+                                        .await
+                                        .increment(
+                                            task.api_name.clone(),
+                                            format!(
+                                                "预期结果：{:?}, 实际结果：{:?}",
+                                                assert_option.reference_object, result
+                                            ),
+                                            task.endpoint.lock().await.url.clone()).await;
                                         if task.verbose{
                                             eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",task.api_name ,assert_option.reference_object, result)
                                         }

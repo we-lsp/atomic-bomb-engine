@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Eq, Clone, Serialize, Deserialize)]
-pub struct ErrKey {
+pub struct HttpErrKey {
     pub name: String,
     pub code: u16,
     pub msg: String,
@@ -13,17 +13,17 @@ pub struct ErrKey {
     pub source: String,
 }
 
-impl PartialEq for ErrKey {
+impl PartialEq for HttpErrKey {
     fn eq(&self, other: &Self) -> bool {
-        self.name == self.name &&
-        self.url == self.url
+        self.name == other.name
+            && self.url == other.url
             && self.code == other.code
-            && self.msg == self.msg
-            && self.source == self.source
+            && self.msg == other.msg
+            && self.source == other.source
     }
 }
 
-impl Hash for ErrKey {
+impl Hash for HttpErrKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         format!(
             "{:?}{:?}{:?}{:?}{:?}",
@@ -34,7 +34,7 @@ impl Hash for ErrKey {
 }
 
 pub struct HttpErrorStats {
-    pub(crate) errors: Arc<Mutex<HashMap<ErrKey, u32>>>,
+    pub(crate) errors: Arc<Mutex<HashMap<HttpErrKey, u32>>>,
 }
 
 impl HttpErrorStats {
@@ -44,10 +44,17 @@ impl HttpErrorStats {
         }
     }
 
-    pub(crate) async fn increment(&self, name: String, url: String, code: u16, msg: String, source: String) {
+    pub(crate) async fn increment(
+        &self,
+        name: String,
+        url: String,
+        code: u16,
+        msg: String,
+        source: String,
+    ) {
         let mut errors = self.errors.lock().await;
         *errors
-            .entry(ErrKey {
+            .entry(HttpErrKey {
                 name,
                 url,
                 code,

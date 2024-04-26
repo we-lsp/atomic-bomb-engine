@@ -95,14 +95,10 @@ pub(crate) async fn start_concurrency(
                 }
             };
         }
-        // 总请求数
-        *total_requests_arc.lock().await += 1;
-        // api请求数
-        *api_total_requests_arc.lock().await += 1;
         // api名称副本
         let api_name_clone = endpoint_arc.lock().await.name.clone();
         // url副本
-         let url_clone = endpoint_arc.lock().await.url.clone();
+        let url_clone = endpoint_arc.lock().await.url.clone();
         // 请求方法副本
         let method_clone = endpoint_arc.lock().await.method.clone();
         // json副本
@@ -124,7 +120,6 @@ pub(crate) async fn start_concurrency(
         let mut request = client.request(method, endpoint_arc.lock().await.url.clone());
         // 构建请求头
         let mut headers = HeaderMap::new();
-        // headers.insert(USER_AGENT, user_agent_clone.parse()?);
         if let Some(headers_map) = headers_clone {
             headers.extend(headers_map.iter().map(|(k, v)| {
                 let header_name = k.parse::<HeaderName>().expect("无效的header名称");
@@ -253,6 +248,11 @@ pub(crate) async fn start_concurrency(
         // 发送请求
         match request.send().await {
             Ok(response) => {
+                // 总请求数
+                *total_requests_arc.lock().await += 1;
+                // api请求数
+                *api_total_requests_arc.lock().await += 1;
+                // 获取状态码
                 let status = response.status();
                 match status {
                     // 正确的状态码
@@ -341,7 +341,7 @@ pub(crate) async fn start_concurrency(
                                             match e.source() {
                                                 None => "-".to_string(),
                                                 Some(source) => source.to_string(),
-                                            }
+                                            },
                                         )
                                         .await;
                                     break;
@@ -395,8 +395,6 @@ pub(crate) async fn start_concurrency(
                             let api_total_requests = api_total_requests_arc.lock().await.clone();
                             let api_success_requests =
                                 api_successful_requests_arc.lock().await.clone();
-                            let api_rps = api_total_requests as f64
-                                / (Instant::now() - test_start).as_secs_f64();
                             let api_success_rate =
                                 api_success_requests as f64 / api_total_requests as f64 * 100.0;
                             let throughput_per_second_kb =
@@ -413,7 +411,6 @@ pub(crate) async fn start_concurrency(
                             api_res.min_response_time = *api_min_rt;
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
-                            api_res.rps = api_rps;
                             api_res.success_rate = api_success_rate;
                             api_res.err_count = *api_err_count_arc.lock().await;
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
@@ -504,7 +501,7 @@ pub(crate) async fn start_concurrency(
                                             match e.source() {
                                                 None => "-".to_string(),
                                                 Some(source) => source.to_string(),
-                                            }
+                                            },
                                         )
                                         .await;
                                     break;
@@ -522,8 +519,6 @@ pub(crate) async fn start_concurrency(
                         let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                         let api_total_requests = api_total_requests_arc.lock().await.clone();
                         let api_success_requests = api_successful_requests_arc.lock().await.clone();
-                        let api_rps =
-                            api_total_requests as f64 / (Instant::now() - test_start).as_secs_f64();
                         let api_success_rate =
                             api_success_requests as f64 / api_total_requests as f64 * 100.0;
                         let throughput_per_second_kb =
@@ -562,7 +557,6 @@ pub(crate) async fn start_concurrency(
                             api_res.min_response_time = *api_min_rt;
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
-                            api_res.rps = api_rps;
                             api_res.success_rate = api_success_rate;
                             api_res.err_count = *api_err_count_arc.lock().await;
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
@@ -585,6 +579,10 @@ pub(crate) async fn start_concurrency(
                 }
             }
             Err(e) => {
+                // 总请求数
+                *total_requests_arc.lock().await += 1;
+                // api请求数
+                *api_total_requests_arc.lock().await += 1;
                 *err_count_arc.lock().await += 1;
                 *api_err_count_arc.lock().await += 1;
                 let status_code: u16;

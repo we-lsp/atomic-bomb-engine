@@ -314,7 +314,12 @@ pub async fn batch(
         Ok(n) => n.as_millis(),
         Err(_) => 0,
     };
-    let api_results = results_arc.lock().await;
+    let mut api_results = results_arc.lock().await;
+    // 计算每个接口的rps
+    for (index, res) in api_results.clone().into_iter().enumerate() {
+        let rps = res.total_requests as f64 / total_duration;
+        api_results[index].rps = rps;
+    }
     let error_rate = err_count as f64 / total_requests as f64 * 100.0;
     let total_concurrent_number_clone = concurrent_number.lock().await.clone();
     // 最终结果
@@ -326,7 +331,7 @@ pub async fn batch(
         response_time_95: *histogram.percentile(95.0)?.range().start(),
         response_time_99: *histogram.percentile(99.0)?.range().start(),
         total_requests,
-        rps: total_requests as f64 / test_duration_secs as f64,
+        rps: total_requests as f64 / total_duration,
         max_response_time: *max_response_time.lock().await,
         min_response_time: *min_response_time.lock().await,
         err_count: *err_count_clone.lock().await,
@@ -367,39 +372,39 @@ mod tests {
         });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        endpoints.push(ApiEndpoint {
-            name: "有断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
-            method: "GET".to_string(),
-            weight: 1,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: Some(assert_vec.clone()),
-            // think_time_option: Some(ThinkTime {
-            //     min_millis: 300,
-            //     max_millis: 500,
-            // }),
-            think_time_option: None,
-            setup_options: None,
-        });
+        // endpoints.push(ApiEndpoint {
+        //     name: "有断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
+        //     method: "GET".to_string(),
+        //     weight: 1,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: Some(assert_vec.clone()),
+        //     // think_time_option: Some(ThinkTime {
+        //     //     min_millis: 300,
+        //     //     max_millis: 500,
+        //     // }),
+        //     think_time_option: None,
+        //     setup_options: None,
+        // });
         // //
+        // endpoints.push(ApiEndpoint {
+        //     name: "无断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "POST".to_string(),
+        //     weight: 3,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: None,
+        //     think_time_option: None,
+        //     setup_options: None,
+        // });
+        //
         endpoints.push(ApiEndpoint {
-            name: "无断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-            method: "POST".to_string(),
-            weight: 3,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: None,
-            think_time_option: None,
-            setup_options: None,
-        });
-
-        endpoints.push(ApiEndpoint{
             name: "test-1".to_string(),
             url: "http://127.0.0.1:8080/direct".to_string(),
             method: "POST".to_string(),
@@ -407,7 +412,7 @@ mod tests {
             json: Some(json!({"name": "test","number": 10086})),
             headers: None,
             cookies: None,
-            form_data:None,
+            form_data: None,
             assert_options: None,
             think_time_option: None,
             setup_options: None,
@@ -444,7 +449,7 @@ mod tests {
                 increase_step: 5,
                 increase_interval: 2,
             }),
-            Option::from(setup),
+            None,
             4096,
         )
         .await
