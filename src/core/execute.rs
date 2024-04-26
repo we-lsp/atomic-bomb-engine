@@ -152,8 +152,6 @@ pub async fn run(
         let total_response_size_clone = total_response_size.clone();
         // 请求次数副本
         let total_requests_clone = total_requests.clone();
-        // http错误副本
-        let http_errors_clone = http_errors.clone();
         // 断言错误副本
         let assert_errors_clone = assert_errors.clone();
         // headers副本
@@ -207,7 +205,6 @@ pub async fn run(
                 if let Some(form_map) = &*form_map_clone {
                     request = request.form(form_map);
                 }
-                let url_string = url.to_string();
                 // 开始发送请求
                 match request.send().await {
                     // 请求成功
@@ -319,36 +316,12 @@ pub async fn run(
                             }
                             // 状态码错误
                             _ => {
-                                *err_count_clone.lock().await += 1;
-                                let status_code = u16::from(response.status());
-                                let err_msg = format!("HTTP 错误: 状态码 {}", status_code);
-                                let url = response.url().to_string();
-                                http_errors_clone
-                                    .lock()
-                                    .await
-                                    .increment(status_code, err_msg, url)
-                                    .await;
+                                eprintln!("状态码错误")
                             }
                         }
                     }
                     // 请求失败，如果有状态码，就记录
-                    Err(e) => {
-                        *err_count_clone.lock().await += 1;
-                        let status_code: u16;
-                        match e.status() {
-                            None => {
-                                status_code = 0;
-                            }
-                            Some(code) => {
-                                status_code = u16::from(code);
-                            }
-                        }
-                        let err_msg = e.to_string();
-                        http_errors_clone
-                            .lock()
-                            .await
-                            .increment(status_code, err_msg, url_string)
-                            .await;
+                    Err(_) => {
                     }
                 }
             }

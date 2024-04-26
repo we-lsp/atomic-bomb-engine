@@ -399,18 +399,19 @@ mod tests {
             setup_options: None,
         });
 
-        // endpoints.push(ApiEndpoint{
-        //     name: "test-1".to_string(),
-        //     url: "http://127.0.0.1:8080/".to_string(),
-        //     method: "POST".to_string(),
-        //     timeout_secs: 10,
-        //     weight: 1,
-        //     json: Some(json!({"name": "test","number": 10086})),
-        //     headers: None,
-        //     cookies: None,
-        //     form_data:None,
-        //     assert_options: None,
-        // });
+        endpoints.push(ApiEndpoint{
+            name: "test-1".to_string(),
+            url: "http://127.0.0.1:8080/direct".to_string(),
+            method: "POST".to_string(),
+            weight: 1,
+            json: Some(json!({"name": "test","number": 10086})),
+            headers: None,
+            cookies: None,
+            form_data:None,
+            assert_options: None,
+            think_time_option: None,
+            setup_options: None,
+        });
         let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();
         jsonpath_extracts.push(JsonpathExtract {
             key: "test-code".to_string(),

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::models::http_error_stats::ErrKey;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestResult {
@@ -15,7 +16,7 @@ pub struct TestResult {
     pub err_count: i32,
     pub total_data_kb: f64,
     pub throughput_per_second_kb: f64,
-    pub http_errors: HashMap<(u16, String, String), u32>,
+    pub http_errors: HashMap<ErrKey, u32>,
     pub timestamp: u128,
     pub assert_errors: HashMap<(String, String), u32>,
 }
@@ -35,7 +36,7 @@ pub struct BatchResult {
     pub err_count: i32,
     pub total_data_kb: f64,
     pub throughput_per_second_kb: f64,
-    pub http_errors: HashMap<(u16, String, String), u32>,
+    pub http_errors: HashMap<ErrKey, u32>,
     pub timestamp: u128,
     pub assert_errors: HashMap<(String, String), u32>,
     pub total_concurrent_number: i32,

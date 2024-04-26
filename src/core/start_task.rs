@@ -99,6 +99,10 @@ pub(crate) async fn start_concurrency(
         *total_requests_arc.lock().await += 1;
         // api请求数
         *api_total_requests_arc.lock().await += 1;
+        // api名称副本
+        let api_name_clone = endpoint_arc.lock().await.name.clone();
+        // url副本
+         let url_clone = endpoint_arc.lock().await.url.clone();
         // 请求方法副本
         let method_clone = endpoint_arc.lock().await.method.clone();
         // json副本
@@ -330,9 +334,14 @@ pub(crate) async fn start_concurrency(
                                         .lock()
                                         .await
                                         .increment(
-                                            0,
-                                            format!("获取响应流失败::{:?}", e),
-                                            endpoint_arc.lock().await.url.clone(),
+                                            api_name_clone.clone(),
+                                            url_clone.clone(),
+                                            e.status().unwrap().as_u16(),
+                                            e.to_string(),
+                                            match e.source() {
+                                                None => "-".to_string(),
+                                                Some(source) => source.to_string(),
+                                            }
                                         )
                                         .await;
                                     break;
@@ -488,9 +497,14 @@ pub(crate) async fn start_concurrency(
                                         .lock()
                                         .await
                                         .increment(
-                                            0,
-                                            format!("获取响应流失败::{:?}", e),
-                                            endpoint_arc.lock().await.url.clone(),
+                                            api_name_clone.clone(),
+                                            url_clone.clone(),
+                                            e.status().unwrap().as_u16(),
+                                            e.to_string(),
+                                            match e.source() {
+                                                None => "-".to_string(),
+                                                Some(source) => source.to_string(),
+                                            }
                                         )
                                         .await;
                                     break;
@@ -519,7 +533,13 @@ pub(crate) async fn start_concurrency(
                         http_errors_arc
                             .lock()
                             .await
-                            .increment(status_code, err_msg, endpoint_arc.lock().await.url.clone())
+                            .increment(
+                                api_name_clone.clone(),
+                                url_clone.clone(),
+                                status.as_u16(),
+                                err_msg,
+                                "-".to_string(),
+                            )
                             .await;
                         if verbose {
                             println!(
@@ -582,18 +602,15 @@ pub(crate) async fn start_concurrency(
                     None => "None".to_string(),
                     Some(source) => source.to_string(),
                 };
-                let err_msg = format!(
-                    "http请求错误:{:?}, source:{:?}",
-                    err.to_string(),
-                    err_source
-                );
                 http_errors_arc
                     .lock()
                     .await
                     .increment(
+                        endpoint_arc.lock().await.name.clone(),
+                        url_clone.clone(),
                         status_code,
-                        err_msg.to_string(),
-                        endpoint_arc.lock().await.url.clone(),
+                        err.to_string(),
+                        err_source,
                     )
                     .await;
             }
