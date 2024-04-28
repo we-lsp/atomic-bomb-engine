@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use crate::models::assert_task::AssertTask;
 use jsonpath_lib::select;
 use serde_json::Value;
@@ -103,9 +104,9 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                 }
                 if !assertion_failed{
                     // 正确统计+1
-                    *task.successful_requests.lock().await += 1;
+                    task.successful_requests.fetch_add(1, Ordering::Relaxed);
                     // api正确统计+1
-                    *task.api_successful_requests.lock().await += 1;
+                    task.api_successful_requests.fetch_add(1, Ordering::Relaxed);
                 };
                 // 回调完成信号
                 if let Err(_) = task.completion_signal.send(()){

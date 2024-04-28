@@ -11,7 +11,7 @@ use tokio::time::interval;
 
 pub(crate) async fn collect_results(
     total_requests: Arc<AtomicUsize>,
-    successful_requests: Arc<Mutex<i32>>,
+    successful_requests: Arc<AtomicUsize>,
     histogram: Arc<Mutex<Histogram>>,
     total_response_size: Arc<Mutex<u64>>,
     http_errors: Arc<Mutex<HttpErrorStats>>,
@@ -34,7 +34,7 @@ pub(crate) async fn collect_results(
         let min_response_time_c = *min_resp_time.lock().await;
         let total_duration = (Instant::now() - test_start).as_secs_f64();
         let total_requests = total_requests.load(Ordering::SeqCst) as f64;
-        let successful_requests = *successful_requests.lock().await as f64;
+        let successful_requests = successful_requests.load(Ordering::SeqCst) as f64;
         let success_rate = match total_requests == 0f64 {
             true => 0f64,
             false => successful_requests / total_requests * 100.0,

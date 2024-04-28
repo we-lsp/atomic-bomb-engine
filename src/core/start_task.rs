@@ -42,11 +42,11 @@ pub(crate) async fn start_concurrency(
     total_response_size_arc: Arc<Mutex<u64>>,
     api_total_response_size_arc: Arc<Mutex<u64>>,
     api_err_count_arc: Arc<Mutex<i32>>,
-    successful_requests_arc: Arc<Mutex<i32>>,
+    successful_requests_arc: Arc<AtomicUsize>,
     err_count_arc: Arc<Mutex<i32>>,
     http_errors_arc: Arc<Mutex<HttpErrorStats>>,
     assert_errors_arc: Arc<Mutex<AssertErrorStats>>,
-    api_successful_requests_arc: Arc<Mutex<i32>>,
+    api_successful_requests_arc: Arc<AtomicUsize>,
     api_result_arc: Arc<Mutex<ApiResult>>,
     results_arc: Arc<Mutex<Vec<ApiResult>>>,
     tx_assert: Sender<AssertTask>,
@@ -385,8 +385,8 @@ pub(crate) async fn start_concurrency(
                             }
                             None => {
                                 // 没有断言的时候将成功数据+1
-                                *successful_requests_arc.lock().await += 1;
-                                *api_successful_requests_arc.lock().await += 1;
+                                successful_requests_arc.fetch_add(1, Ordering::Relaxed);
+                                api_successful_requests_arc.fetch_add(1, Ordering::Relaxed);
                             }
                         };
                         // 给结果赋值
@@ -395,7 +395,7 @@ pub(crate) async fn start_concurrency(
                             let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                             let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
                             let api_success_requests =
-                                api_successful_requests_arc.lock().await.clone();
+                                api_successful_requests_arc.load(Ordering::SeqCst);
                             let api_success_rate =
                                 api_success_requests as f64 / api_total_requests as f64 * 100.0;
                             let throughput_per_second_kb =
@@ -519,7 +519,7 @@ pub(crate) async fn start_concurrency(
                         let api_total_data_bytes = *api_total_response_size_arc.lock().await;
                         let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                         let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
-                        let api_success_requests = api_successful_requests_arc.lock().await.clone();
+                        let api_success_requests = api_successful_requests_arc.load(Ordering::SeqCst);
                         let api_success_rate =
                             api_success_requests as f64 / api_total_requests as f64 * 100.0;
                         let throughput_per_second_kb =
