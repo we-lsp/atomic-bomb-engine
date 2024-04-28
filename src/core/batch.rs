@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -47,9 +48,9 @@ pub async fn batch(
     // 总响应时间统计
     let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
     // 成功数据统计
-    let successful_requests = Arc::new(Mutex::new(0));
+    let successful_requests = Arc::new(AtomicUsize::new(0));
     // 请求总数统计
-    let total_requests = Arc::new(Mutex::new(0));
+    let total_requests = Arc::new(AtomicUsize::new(0));
     // 统计最大响应时间
     let max_response_time = Arc::new(Mutex::new(0u64));
     // 统计最小响应时间
@@ -175,9 +176,9 @@ pub async fn batch(
         // 接口数据的统计
         let api_histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
         // 接口成功数据统计
-        let api_successful_requests = Arc::new(Mutex::new(0));
+        let api_successful_requests = Arc::new(AtomicUsize::new(0));
         // 接口请求总数统计
-        let api_total_requests = Arc::new(Mutex::new(0));
+        let api_total_requests = Arc::new(AtomicUsize::new(0));
         // 接口统计最大响应时间
         let api_max_response_time = Arc::new(Mutex::new(0u64));
         // 接口统计最小响应时间
@@ -302,8 +303,8 @@ pub async fn batch(
     let err_count_clone = Arc::clone(&err_count);
     let err_count = *err_count_clone.lock().await;
     let total_duration = (Instant::now() - test_start).as_secs_f64();
-    let total_requests = *total_requests.lock().await as u64;
-    let successful_requests = *successful_requests.lock().await as f64;
+    let total_requests = total_requests.load(Ordering::SeqCst) as u64;
+    let successful_requests = successful_requests.load(Ordering::SeqCst) as f64;
     let success_rate = successful_requests / total_requests as f64 * 100.0;
     let histogram = histogram.lock().await;
     let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
@@ -314,7 +315,12 @@ pub async fn batch(
         Ok(n) => n.as_millis(),
         Err(_) => 0,
     };
-    let api_results = results_arc.lock().await;
+    let mut api_results = results_arc.lock().await;
+    // 计算每个接口的rps
+    for (index, res) in api_results.clone().into_iter().enumerate() {
+        let rps = res.total_requests as f64 / total_duration;
+        api_results[index].rps = rps;
+    }
     let error_rate = err_count as f64 / total_requests as f64 * 100.0;
     let total_concurrent_number_clone = concurrent_number.lock().await.clone();
     // 最终结果
@@ -326,7 +332,7 @@ pub async fn batch(
         response_time_95: *histogram.percentile(95.0)?.range().start(),
         response_time_99: *histogram.percentile(99.0)?.range().start(),
         total_requests,
-        rps: total_requests as f64 / test_duration_secs as f64,
+        rps: total_requests as f64 / total_duration,
         max_response_time: *max_response_time.lock().await,
         min_response_time: *min_response_time.lock().await,
         err_count: *err_count_clone.lock().await,
@@ -367,50 +373,51 @@ mod tests {
         });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        endpoints.push(ApiEndpoint {
-            name: "有断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
-            method: "GET".to_string(),
-            weight: 1,
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            assert_options: Some(assert_vec.clone()),
-            // think_time_option: Some(ThinkTime {
-            //     min_millis: 300,
-            //     max_millis: 500,
-            // }),
-            think_time_option: None,
-            setup_options: None,
-        });
+        // endpoints.push(ApiEndpoint {
+        //     name: "有断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
+        //     method: "GET".to_string(),
+        //     weight: 1,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: Some(assert_vec.clone()),
+        //     // think_time_option: Some(ThinkTime {
+        //     //     min_millis: 300,
+        //     //     max_millis: 500,
+        //     // }),
+        //     think_time_option: None,
+        //     setup_options: None,
+        // });
         // //
+        // endpoints.push(ApiEndpoint {
+        //     name: "无断言".to_string(),
+        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+        //     method: "POST".to_string(),
+        //     weight: 3,
+        //     json: None,
+        //     form_data: None,
+        //     headers: None,
+        //     cookies: None,
+        //     assert_options: None,
+        //     think_time_option: None,
+        //     setup_options: None,
+        // });
+        //
         endpoints.push(ApiEndpoint {
-            name: "无断言".to_string(),
-            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            name: "test-1".to_string(),
+            url: "http://127.0.0.1:8080/direct".to_string(),
             method: "POST".to_string(),
-            weight: 3,
-            json: None,
-            form_data: None,
+            weight: 1,
+            json: Some(json!({"name": "test","number": 10086})),
             headers: None,
             cookies: None,
+            form_data: None,
             assert_options: None,
             think_time_option: None,
             setup_options: None,
         });
-
-        // endpoints.push(ApiEndpoint{
-        //     name: "test-1".to_string(),
-        //     url: "http://127.0.0.1:8080/".to_string(),
-        //     method: "POST".to_string(),
-        //     timeout_secs: 10,
-        //     weight: 1,
-        //     json: Some(json!({"name": "test","number": 10086})),
-        //     headers: None,
-        //     cookies: None,
-        //     form_data:None,
-        //     assert_options: None,
-        // });
         let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();
         jsonpath_extracts.push(JsonpathExtract {
             key: "test-code".to_string(),
@@ -443,7 +450,7 @@ mod tests {
                 increase_step: 5,
                 increase_interval: 2,
             }),
-            Option::from(setup),
+            None,
             4096,
         )
         .await

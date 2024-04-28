@@ -4,13 +4,14 @@ use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use histogram::Histogram;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tokio::time::interval;
 
 pub(crate) async fn collect_results(
-    total_requests: Arc<Mutex<usize>>,
-    successful_requests: Arc<Mutex<i32>>,
+    total_requests: Arc<AtomicUsize>,
+    successful_requests: Arc<AtomicUsize>,
     histogram: Arc<Mutex<Histogram>>,
     total_response_size: Arc<Mutex<u64>>,
     http_errors: Arc<Mutex<HttpErrorStats>>,
@@ -32,10 +33,16 @@ pub(crate) async fn collect_results(
         let max_response_time_c = *max_resp_time.lock().await;
         let min_response_time_c = *min_resp_time.lock().await;
         let total_duration = (Instant::now() - test_start).as_secs_f64();
-        let total_requests = *total_requests.lock().await as f64;
-        let successful_requests = *successful_requests.lock().await as f64;
-        let success_rate = successful_requests / total_requests * 100.0;
-        let error_rate = err_count as f64 / total_requests * 100.0;
+        let total_requests = total_requests.load(Ordering::SeqCst) as f64;
+        let successful_requests = successful_requests.load(Ordering::SeqCst) as f64;
+        let success_rate = match total_requests == 0f64 {
+            true => 0f64,
+            false => successful_requests / total_requests * 100.0,
+        };
+        let error_rate = match total_requests == 0f64 {
+            true => 0f64,
+            false => err_count as f64 / total_requests * 100.0,
+        };
         let histogram = histogram.lock().await;
         let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
         let throughput_kb_s = total_response_size_kb / total_duration;
@@ -58,7 +65,12 @@ pub(crate) async fn collect_results(
             Ok(n) => n.as_millis(),
             Err(_) => 0,
         };
-        let api_results = api_results.lock().await;
+        let mut api_results = api_results.lock().await;
+        // 计算每个接口的rps
+        for (index, res) in api_results.clone().into_iter().enumerate() {
+            let rps = res.total_requests as f64 / total_duration;
+            api_results[index].rps = rps;
+        }
         let total_concurrent_number = *concurrent_number.lock().await;
         let mut queue = RESULTS_QUEUE.lock().await;
         if queue.len() == 1 {

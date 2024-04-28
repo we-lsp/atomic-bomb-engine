@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::error::Error as std_error;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::mpsc::Sender;
@@ -30,8 +31,8 @@ pub(crate) async fn start_concurrency(
     concurrent_number_arc: Arc<Mutex<i32>>,
     extract_map_arc: Arc<Mutex<BTreeMap<String, Value>>>,
     endpoint_arc: Arc<Mutex<ApiEndpoint>>,
-    total_requests_arc: Arc<Mutex<usize>>,
-    api_total_requests_arc: Arc<Mutex<u64>>,
+    total_requests_arc: Arc<AtomicUsize>,
+    api_total_requests_arc: Arc<AtomicUsize>,
     histogram_arc: Arc<Mutex<Histogram>>,
     api_histogram_arc: Arc<Mutex<Histogram>>,
     max_response_time_arc: Arc<Mutex<u64>>,
@@ -41,11 +42,11 @@ pub(crate) async fn start_concurrency(
     total_response_size_arc: Arc<Mutex<u64>>,
     api_total_response_size_arc: Arc<Mutex<u64>>,
     api_err_count_arc: Arc<Mutex<i32>>,
-    successful_requests_arc: Arc<Mutex<i32>>,
+    successful_requests_arc: Arc<AtomicUsize>,
     err_count_arc: Arc<Mutex<i32>>,
     http_errors_arc: Arc<Mutex<HttpErrorStats>>,
     assert_errors_arc: Arc<Mutex<AssertErrorStats>>,
-    api_successful_requests_arc: Arc<Mutex<i32>>,
+    api_successful_requests_arc: Arc<AtomicUsize>,
     api_result_arc: Arc<Mutex<ApiResult>>,
     results_arc: Arc<Mutex<Vec<ApiResult>>>,
     tx_assert: Sender<AssertTask>,
@@ -95,10 +96,10 @@ pub(crate) async fn start_concurrency(
                 }
             };
         }
-        // 总请求数
-        *total_requests_arc.lock().await += 1;
-        // api请求数
-        *api_total_requests_arc.lock().await += 1;
+        // api名称副本
+        let api_name_clone = endpoint_arc.lock().await.name.clone();
+        // url副本
+        let url_clone = endpoint_arc.lock().await.url.clone();
         // 请求方法副本
         let method_clone = endpoint_arc.lock().await.method.clone();
         // json副本
@@ -120,7 +121,6 @@ pub(crate) async fn start_concurrency(
         let mut request = client.request(method, endpoint_arc.lock().await.url.clone());
         // 构建请求头
         let mut headers = HeaderMap::new();
-        // headers.insert(USER_AGENT, user_agent_clone.parse()?);
         if let Some(headers_map) = headers_clone {
             headers.extend(headers_map.iter().map(|(k, v)| {
                 let header_name = k.parse::<HeaderName>().expect("无效的header名称");
@@ -249,6 +249,11 @@ pub(crate) async fn start_concurrency(
         // 发送请求
         match request.send().await {
             Ok(response) => {
+                // 总请求数
+                total_requests_arc.fetch_add(1, Ordering::Relaxed);
+                // api请求数
+                api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
+                // 获取状态码
                 let status = response.status();
                 match status {
                     // 正确的状态码
@@ -330,9 +335,14 @@ pub(crate) async fn start_concurrency(
                                         .lock()
                                         .await
                                         .increment(
-                                            0,
-                                            format!("获取响应流失败::{:?}", e),
-                                            endpoint_arc.lock().await.url.clone(),
+                                            api_name_clone.clone(),
+                                            url_clone.clone(),
+                                            e.status().unwrap().as_u16(),
+                                            e.to_string(),
+                                            match e.source() {
+                                                None => "-".to_string(),
+                                                Some(source) => source.to_string(),
+                                            },
                                         )
                                         .await;
                                     break;
@@ -375,19 +385,17 @@ pub(crate) async fn start_concurrency(
                             }
                             None => {
                                 // 没有断言的时候将成功数据+1
-                                *successful_requests_arc.lock().await += 1;
-                                *api_successful_requests_arc.lock().await += 1;
+                                successful_requests_arc.fetch_add(1, Ordering::Relaxed);
+                                api_successful_requests_arc.fetch_add(1, Ordering::Relaxed);
                             }
                         };
                         // 给结果赋值
                         {
                             let api_total_data_bytes = *api_total_response_size_arc.lock().await;
                             let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                            let api_total_requests = api_total_requests_arc.lock().await.clone();
+                            let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
                             let api_success_requests =
-                                api_successful_requests_arc.lock().await.clone();
-                            let api_rps = api_total_requests as f64
-                                / (Instant::now() - test_start).as_secs_f64();
+                                api_successful_requests_arc.load(Ordering::SeqCst);
                             let api_success_rate =
                                 api_success_requests as f64 / api_total_requests as f64 * 100.0;
                             let throughput_per_second_kb =
@@ -404,7 +412,6 @@ pub(crate) async fn start_concurrency(
                             api_res.min_response_time = *api_min_rt;
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
-                            api_res.rps = api_rps;
                             api_res.success_rate = api_success_rate;
                             api_res.err_count = *api_err_count_arc.lock().await;
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
@@ -488,9 +495,14 @@ pub(crate) async fn start_concurrency(
                                         .lock()
                                         .await
                                         .increment(
-                                            0,
-                                            format!("获取响应流失败::{:?}", e),
-                                            endpoint_arc.lock().await.url.clone(),
+                                            api_name_clone.clone(),
+                                            url_clone.clone(),
+                                            e.status().unwrap().as_u16(),
+                                            e.to_string(),
+                                            match e.source() {
+                                                None => "-".to_string(),
+                                                Some(source) => source.to_string(),
+                                            },
                                         )
                                         .await;
                                     break;
@@ -506,10 +518,8 @@ pub(crate) async fn start_concurrency(
                         // 获取需要等待的对象
                         let api_total_data_bytes = *api_total_response_size_arc.lock().await;
                         let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                        let api_total_requests = api_total_requests_arc.lock().await.clone();
-                        let api_success_requests = api_successful_requests_arc.lock().await.clone();
-                        let api_rps =
-                            api_total_requests as f64 / (Instant::now() - test_start).as_secs_f64();
+                        let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
+                        let api_success_requests = api_successful_requests_arc.load(Ordering::SeqCst);
                         let api_success_rate =
                             api_success_requests as f64 / api_total_requests as f64 * 100.0;
                         let throughput_per_second_kb =
@@ -519,7 +529,13 @@ pub(crate) async fn start_concurrency(
                         http_errors_arc
                             .lock()
                             .await
-                            .increment(status_code, err_msg, endpoint_arc.lock().await.url.clone())
+                            .increment(
+                                api_name_clone.clone(),
+                                url_clone.clone(),
+                                status.as_u16(),
+                                err_msg,
+                                "-".to_string(),
+                            )
                             .await;
                         if verbose {
                             println!(
@@ -542,7 +558,6 @@ pub(crate) async fn start_concurrency(
                             api_res.min_response_time = *api_min_rt;
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
-                            api_res.rps = api_rps;
                             api_res.success_rate = api_success_rate;
                             api_res.err_count = *api_err_count_arc.lock().await;
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
@@ -565,6 +580,10 @@ pub(crate) async fn start_concurrency(
                 }
             }
             Err(e) => {
+                // 总请求数
+                total_requests_arc.fetch_add(1, Ordering::Relaxed);
+                // api请求数
+                api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 *err_count_arc.lock().await += 1;
                 *api_err_count_arc.lock().await += 1;
                 let status_code: u16;
@@ -582,18 +601,15 @@ pub(crate) async fn start_concurrency(
                     None => "None".to_string(),
                     Some(source) => source.to_string(),
                 };
-                let err_msg = format!(
-                    "http请求错误:{:?}, source:{:?}",
-                    err.to_string(),
-                    err_source
-                );
                 http_errors_arc
                     .lock()
                     .await
                     .increment(
+                        endpoint_arc.lock().await.name.clone(),
+                        url_clone.clone(),
                         status_code,
-                        err_msg.to_string(),
-                        endpoint_arc.lock().await.url.clone(),
+                        err.to_string(),
+                        err_source,
                     )
                     .await;
             }
