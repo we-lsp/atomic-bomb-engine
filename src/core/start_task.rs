@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::error::Error as std_error;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::mpsc::Sender;
@@ -30,8 +31,8 @@ pub(crate) async fn start_concurrency(
     concurrent_number_arc: Arc<Mutex<i32>>,
     extract_map_arc: Arc<Mutex<BTreeMap<String, Value>>>,
     endpoint_arc: Arc<Mutex<ApiEndpoint>>,
-    total_requests_arc: Arc<Mutex<usize>>,
-    api_total_requests_arc: Arc<Mutex<u64>>,
+    total_requests_arc: Arc<AtomicUsize>,
+    api_total_requests_arc: Arc<AtomicUsize>,
     histogram_arc: Arc<Mutex<Histogram>>,
     api_histogram_arc: Arc<Mutex<Histogram>>,
     max_response_time_arc: Arc<Mutex<u64>>,
@@ -249,9 +250,9 @@ pub(crate) async fn start_concurrency(
         match request.send().await {
             Ok(response) => {
                 // 总请求数
-                *total_requests_arc.lock().await += 1;
+                total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 // api请求数
-                *api_total_requests_arc.lock().await += 1;
+                api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 // 获取状态码
                 let status = response.status();
                 match status {
@@ -392,7 +393,7 @@ pub(crate) async fn start_concurrency(
                         {
                             let api_total_data_bytes = *api_total_response_size_arc.lock().await;
                             let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                            let api_total_requests = api_total_requests_arc.lock().await.clone();
+                            let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
                             let api_success_requests =
                                 api_successful_requests_arc.lock().await.clone();
                             let api_success_rate =
@@ -517,7 +518,7 @@ pub(crate) async fn start_concurrency(
                         // 获取需要等待的对象
                         let api_total_data_bytes = *api_total_response_size_arc.lock().await;
                         let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                        let api_total_requests = api_total_requests_arc.lock().await.clone();
+                        let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
                         let api_success_requests = api_successful_requests_arc.lock().await.clone();
                         let api_success_rate =
                             api_success_requests as f64 / api_total_requests as f64 * 100.0;
@@ -580,9 +581,9 @@ pub(crate) async fn start_concurrency(
             }
             Err(e) => {
                 // 总请求数
-                *total_requests_arc.lock().await += 1;
+                total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 // api请求数
-                *api_total_requests_arc.lock().await += 1;
+                api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 *err_count_arc.lock().await += 1;
                 *api_err_count_arc.lock().await += 1;
                 let status_code: u16;

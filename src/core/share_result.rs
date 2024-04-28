@@ -4,12 +4,13 @@ use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use histogram::Histogram;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tokio::time::interval;
 
 pub(crate) async fn collect_results(
-    total_requests: Arc<Mutex<usize>>,
+    total_requests: Arc<AtomicUsize>,
     successful_requests: Arc<Mutex<i32>>,
     histogram: Arc<Mutex<Histogram>>,
     total_response_size: Arc<Mutex<u64>>,
@@ -32,7 +33,7 @@ pub(crate) async fn collect_results(
         let max_response_time_c = *max_resp_time.lock().await;
         let min_response_time_c = *min_resp_time.lock().await;
         let total_duration = (Instant::now() - test_start).as_secs_f64();
-        let total_requests = *total_requests.lock().await as f64;
+        let total_requests = total_requests.load(Ordering::SeqCst) as f64;
         let successful_requests = *successful_requests.lock().await as f64;
         let success_rate = match total_requests == 0f64 {
             true => 0f64,

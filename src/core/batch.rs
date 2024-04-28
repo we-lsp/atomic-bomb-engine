@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -49,7 +50,7 @@ pub async fn batch(
     // 成功数据统计
     let successful_requests = Arc::new(Mutex::new(0));
     // 请求总数统计
-    let total_requests = Arc::new(Mutex::new(0));
+    let total_requests = Arc::new(AtomicUsize::new(0));
     // 统计最大响应时间
     let max_response_time = Arc::new(Mutex::new(0u64));
     // 统计最小响应时间
@@ -177,7 +178,7 @@ pub async fn batch(
         // 接口成功数据统计
         let api_successful_requests = Arc::new(Mutex::new(0));
         // 接口请求总数统计
-        let api_total_requests = Arc::new(Mutex::new(0));
+        let api_total_requests = Arc::new(AtomicUsize::new(0));
         // 接口统计最大响应时间
         let api_max_response_time = Arc::new(Mutex::new(0u64));
         // 接口统计最小响应时间
@@ -302,7 +303,7 @@ pub async fn batch(
     let err_count_clone = Arc::clone(&err_count);
     let err_count = *err_count_clone.lock().await;
     let total_duration = (Instant::now() - test_start).as_secs_f64();
-    let total_requests = *total_requests.lock().await as u64;
+    let total_requests = total_requests.load(Ordering::SeqCst) as u64;
     let successful_requests = *successful_requests.lock().await as f64;
     let success_rate = successful_requests / total_requests as f64 * 100.0;
     let histogram = histogram.lock().await;
