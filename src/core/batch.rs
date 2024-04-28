@@ -46,7 +46,12 @@ pub async fn batch(
         return Err(Error::msg(e));
     }
     // 总响应时间统计
-    let histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
+    let histogram = match Histogram::new(14, 20) {
+        Ok(h) => Arc::new(Mutex::new(h)),
+        Err(e) => {
+            return Err(Error::msg(format!("获取存储桶失败::{:?}", e.to_string())));
+        }
+    };
     // 成功数据统计
     let successful_requests = Arc::new(AtomicUsize::new(0));
     // 请求总数统计
@@ -174,7 +179,14 @@ pub async fn batch(
             concurrency_for_endpoint = 1
         }
         // 接口数据的统计
-        let api_histogram = Arc::new(Mutex::new(Histogram::new(14, 20).unwrap()));
+        let api_histogram = match Histogram::new(14, 20){
+            Ok(h) => {
+                Arc::new(Mutex::new(h))
+            }
+            Err(e) => {
+                return Err(Error::msg(format!("获取存储桶失败::{:?}", e.to_string())))
+            }
+        };
         // 接口成功数据统计
         let api_successful_requests = Arc::new(AtomicUsize::new(0));
         // 接口请求总数统计

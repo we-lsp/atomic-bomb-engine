@@ -337,7 +337,14 @@ pub(crate) async fn start_concurrency(
                                         .increment(
                                             api_name_clone.clone(),
                                             url_clone.clone(),
-                                            e.status().unwrap().as_u16(),
+                                            match e.status() {
+                                                None => {
+                                                    0u16
+                                                }
+                                                Some(status_code) => {
+                                                    status_code.as_u16()
+                                                }
+                                            },
                                             e.to_string(),
                                             match e.source() {
                                                 None => "-".to_string(),
@@ -497,7 +504,14 @@ pub(crate) async fn start_concurrency(
                                         .increment(
                                             api_name_clone.clone(),
                                             url_clone.clone(),
-                                            e.status().unwrap().as_u16(),
+                                            match e.status(){
+                                                None => {
+                                                    0u16
+                                                }
+                                                Some(status_code) => {
+                                                    status_code.as_u16()
+                                                }
+                                            },
                                             e.to_string(),
                                             match e.source() {
                                                 None => "-".to_string(),
