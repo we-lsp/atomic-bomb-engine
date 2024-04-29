@@ -319,8 +319,10 @@ pub(crate) async fn start_concurrency(
                             match item {
                                 Ok(chunk) => {
                                     // 获取当前的chunk
-                                    total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
-                                    api_total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
+                                    total_response_size_arc
+                                        .fetch_add(chunk.len(), Ordering::Relaxed);
+                                    api_total_response_size_arc
+                                        .fetch_add(chunk.len(), Ordering::Relaxed);
                                     body_bytes.extend_from_slice(&chunk);
                                 }
                                 Err(e) => {
@@ -389,7 +391,8 @@ pub(crate) async fn start_concurrency(
                         };
                         // 给结果赋值
                         {
-                            let api_total_data_bytes = api_total_response_size_arc.load(Ordering::SeqCst);
+                            let api_total_data_bytes =
+                                api_total_response_size_arc.load(Ordering::SeqCst);
                             let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                             let api_total_requests =
                                 api_total_requests_arc.load(Ordering::SeqCst) as u64;
@@ -479,8 +482,10 @@ pub(crate) async fn start_concurrency(
                             match item {
                                 Ok(chunk) => {
                                     // 获取当前的chunk
-                                    total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
-                                    api_total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
+                                    total_response_size_arc
+                                        .fetch_add(chunk.len(), Ordering::Relaxed);
+                                    api_total_response_size_arc
+                                        .fetch_add(chunk.len(), Ordering::Relaxed);
                                     body_bytes.extend_from_slice(&chunk);
                                 }
                                 Err(e) => {
@@ -514,7 +519,8 @@ pub(crate) async fn start_concurrency(
                             String::from_utf8(body_bytes_clone).expect("无法转换响应体为字符串");
                         eprintln!("{:+?}", buffer);
                         // 获取需要等待的对象
-                        let api_total_data_bytes = api_total_response_size_arc.load(Ordering::SeqCst);
+                        let api_total_data_bytes =
+                            api_total_response_size_arc.load(Ordering::SeqCst);
                         let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                         let api_total_requests =
                             api_total_requests_arc.load(Ordering::SeqCst) as u64;

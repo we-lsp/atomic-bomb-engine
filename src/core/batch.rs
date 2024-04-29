@@ -41,13 +41,13 @@ pub async fn batch(
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
+    // 检查阶梯并发量
     if let Some(step_option) = step_option.clone() {
         // 计算总共增加次数
         let total_steps = test_duration_secs / step_option.increase_interval;
         // 计算总增加并发数
         let total_concurrency_increase =
             step_option.increase_step as u64 * total_steps * (total_steps + 1) / 2;
-        println!("总增加并发数:{:?}", total_concurrency_increase);
         if total_concurrency_increase < concurrent_requests as u64 {
             return Err(Error::msg(
                 "阶梯加压总并发数在设置的时间内无法增加到预设的结束并发数",

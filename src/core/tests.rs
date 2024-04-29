@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use core::option::Option;
-    use serde_json::{json, Value};
+    use super::*;
     use crate::core::batch::batch;
+    use crate::models::api_endpoint::ApiEndpoint;
     use crate::models::assert_option::AssertOption;
     use crate::models::setup::JsonpathExtract;
-    use crate::models::api_endpoint::ApiEndpoint;
     use crate::models::setup::SetupApiEndpoint;
     use crate::models::step_option::StepOption;
-    use super::*;
+    use core::option::Option;
+    use serde_json::{json, Value};
 
     #[tokio::test]
     async fn test_batch() {
@@ -99,7 +99,7 @@ mod tests {
             None,
             4096,
         )
-            .await
+        .await
         {
             Ok(r) => {
                 println!("{:#?}", r)
