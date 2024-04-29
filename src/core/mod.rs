@@ -7,3 +7,4 @@ mod share_result;
 pub mod sleep_guard;
 mod start_task;
 pub mod status_share;
+mod tests;

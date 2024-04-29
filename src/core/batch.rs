@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -41,6 +41,19 @@ pub async fn batch(
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
+    if let Some(step_option) = step_option.clone() {
+        // 计算总共增加次数
+        let total_steps = test_duration_secs / step_option.increase_interval;
+        // 计算总增加并发数
+        let total_concurrency_increase =
+            step_option.increase_step as u64 * total_steps * (total_steps + 1) / 2;
+        println!("总增加并发数:{:?}", total_concurrency_increase);
+        if total_concurrency_increase < concurrent_requests as u64 {
+            return Err(Error::msg(
+                "阶梯加压总并发数在设置的时间内无法增加到预设的结束并发数",
+            ));
+        }
+    };
     // 检查每个接口的名称
     if let Err(e) = check_endpoints_names(api_endpoints.clone()) {
         return Err(Error::msg(e));
@@ -61,13 +74,13 @@ pub async fn batch(
     // 统计最小响应时间
     let min_response_time = Arc::new(Mutex::new(u64::MAX));
     // 统计错误数量
-    let err_count = Arc::new(Mutex::new(0));
+    let err_count = Arc::new(AtomicUsize::new(0));
     // 已开始并发数
-    let concurrent_number = Arc::new(Mutex::new(0));
+    let concurrent_number = Arc::new(AtomicUsize::new(0));
     // 接口线程池
     let mut handles: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
     // 统计响应大小
-    let total_response_size = Arc::new(Mutex::new(0u64));
+    let total_response_size = Arc::new(AtomicUsize::new(0));
     // 统计http错误
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
     // 统计断言错误
@@ -179,13 +192,9 @@ pub async fn batch(
             concurrency_for_endpoint = 1
         }
         // 接口数据的统计
-        let api_histogram = match Histogram::new(14, 20){
-            Ok(h) => {
-                Arc::new(Mutex::new(h))
-            }
-            Err(e) => {
-                return Err(Error::msg(format!("获取存储桶失败::{:?}", e.to_string())))
-            }
+        let api_histogram = match Histogram::new(14, 20) {
+            Ok(h) => Arc::new(Mutex::new(h)),
+            Err(e) => return Err(Error::msg(format!("获取存储桶失败::{:?}", e.to_string()))),
         };
         // 接口成功数据统计
         let api_successful_requests = Arc::new(AtomicUsize::new(0));
@@ -196,11 +205,11 @@ pub async fn batch(
         // 接口统计最小响应时间
         let api_min_response_time = Arc::new(Mutex::new(u64::MAX));
         // 接口统计错误数量
-        let api_err_count = Arc::new(Mutex::new(0));
+        let api_err_count = Arc::new(AtomicUsize::new(0));
         // 接口并发数统计
-        let api_concurrent_number = Arc::new(Mutex::new(0));
+        let api_concurrent_number = Arc::new(AtomicUsize::new(0));
         // 接口响应大小
-        let api_total_response_size = Arc::new(Mutex::new(0u64));
+        let api_total_response_size = Arc::new(AtomicUsize::new(0));
         // 初始化api结果
         let api_result = Arc::new(Mutex::new({
             let mut api_result = ApiResult::new();
@@ -313,13 +322,13 @@ pub async fn batch(
 
     // 对结果进行赋值
     let err_count_clone = Arc::clone(&err_count);
-    let err_count = *err_count_clone.lock().await;
+    let err_count = err_count_clone.load(Ordering::SeqCst);
     let total_duration = (Instant::now() - test_start).as_secs_f64();
     let total_requests = total_requests.load(Ordering::SeqCst) as u64;
     let successful_requests = successful_requests.load(Ordering::SeqCst) as f64;
     let success_rate = successful_requests / total_requests as f64 * 100.0;
     let histogram = histogram.lock().await;
-    let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
+    let total_response_size_kb = total_response_size.load(Ordering::SeqCst) as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors = http_errors.lock().await.errors.clone();
     let assert_errors = assert_errors.lock().await.errors.clone();
@@ -334,7 +343,7 @@ pub async fn batch(
         api_results[index].rps = rps;
     }
     let error_rate = err_count as f64 / total_requests as f64 * 100.0;
-    let total_concurrent_number_clone = concurrent_number.lock().await.clone();
+    let total_concurrent_number_clone = concurrent_number.load(Ordering::SeqCst) as i32;
     // 最终结果
     let result = Ok(BatchResult {
         total_duration,
@@ -347,7 +356,7 @@ pub async fn batch(
         rps: total_requests as f64 / total_duration,
         max_response_time: *max_response_time.lock().await,
         min_response_time: *min_response_time.lock().await,
-        err_count: *err_count_clone.lock().await,
+        err_count: err_count_clone.load(Ordering::SeqCst) as i32,
         total_data_kb: total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors.lock().await.clone(),
@@ -360,119 +369,4 @@ pub async fn batch(
     *should_stop = true;
     eprintln!("测试完成！");
     result
-}
-
-/*
-    单测
-*/
-
-#[cfg(test)]
-mod tests {
-    use core::option::Option;
-
-    use crate::models::assert_option::AssertOption;
-    use crate::models::setup::JsonpathExtract;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test_batch() {
-        let mut assert_vec: Vec<AssertOption> = Vec::new();
-        let ref_obj = Value::from(2000000);
-        assert_vec.push(AssertOption {
-            jsonpath: "$.code".to_string(),
-            reference_object: ref_obj,
-        });
-        let mut endpoints: Vec<ApiEndpoint> = Vec::new();
-
-        // endpoints.push(ApiEndpoint {
-        //     name: "有断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
-        //     method: "GET".to_string(),
-        //     weight: 1,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: Some(assert_vec.clone()),
-        //     // think_time_option: Some(ThinkTime {
-        //     //     min_millis: 300,
-        //     //     max_millis: 500,
-        //     // }),
-        //     think_time_option: None,
-        //     setup_options: None,
-        // });
-        // //
-        // endpoints.push(ApiEndpoint {
-        //     name: "无断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "POST".to_string(),
-        //     weight: 3,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: None,
-        //     think_time_option: None,
-        //     setup_options: None,
-        // });
-        //
-        endpoints.push(ApiEndpoint {
-            name: "test-1".to_string(),
-            url: "http://127.0.0.1:8080/direct".to_string(),
-            method: "POST".to_string(),
-            weight: 1,
-            json: Some(json!({"name": "test","number": 10086})),
-            headers: None,
-            cookies: None,
-            form_data: None,
-            assert_options: None,
-            think_time_option: None,
-            setup_options: None,
-        });
-        let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();
-        jsonpath_extracts.push(JsonpathExtract {
-            key: "test-code".to_string(),
-            jsonpath: "$.code".to_string(),
-        });
-        jsonpath_extracts.push(JsonpathExtract {
-            key: "test-msg".to_string(),
-            jsonpath: "$.msg".to_string(),
-        });
-        let mut setup: Vec<SetupApiEndpoint> = Vec::new();
-        setup.push(SetupApiEndpoint {
-            name: "初始化-1".to_string(),
-            url: "https://ooooo.run/api/short/v1/list".to_string(),
-            method: "get".to_string(),
-            json: None,
-            form_data: None,
-            headers: None,
-            cookies: None,
-            jsonpath_extract: Some(jsonpath_extracts),
-        });
-        match batch(
-            5,
-            100,
-            10,
-            true,
-            true,
-            true,
-            endpoints,
-            Option::from(StepOption {
-                increase_step: 5,
-                increase_interval: 2,
-            }),
-            None,
-            4096,
-        )
-        .await
-        {
-            Ok(r) => {
-                println!("{:#?}", r)
-            }
-            Err(e) => {
-                eprintln!("{:?}", e)
-            }
-        };
-    }
 }

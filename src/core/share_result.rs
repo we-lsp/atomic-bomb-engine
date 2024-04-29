@@ -3,8 +3,8 @@ use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use histogram::Histogram;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tokio::time::interval;
@@ -13,14 +13,14 @@ pub(crate) async fn collect_results(
     total_requests: Arc<AtomicUsize>,
     successful_requests: Arc<AtomicUsize>,
     histogram: Arc<Mutex<Histogram>>,
-    total_response_size: Arc<Mutex<u64>>,
+    total_response_size: Arc<AtomicUsize>,
     http_errors: Arc<Mutex<HttpErrorStats>>,
-    err_count: Arc<Mutex<i32>>,
+    err_count: Arc<AtomicUsize>,
     max_resp_time: Arc<Mutex<u64>>,
     min_resp_time: Arc<Mutex<u64>>,
     assert_error: Arc<Mutex<AssertErrorStats>>,
     api_results: Arc<Mutex<Vec<ApiResult>>>,
-    concurrent_number: Arc<Mutex<i32>>,
+    concurrent_number: Arc<AtomicUsize>,
     verbose: bool,
     test_start: Instant,
 ) {
@@ -29,7 +29,7 @@ pub(crate) async fn collect_results(
     while !should_stop {
         interval.tick().await;
 
-        let err_count = *err_count.lock().await;
+        let err_count = err_count.load(Ordering::SeqCst) as i32;
         let max_response_time_c = *max_resp_time.lock().await;
         let min_response_time_c = *min_resp_time.lock().await;
         let total_duration = (Instant::now() - test_start).as_secs_f64();
@@ -44,7 +44,7 @@ pub(crate) async fn collect_results(
             false => err_count as f64 / total_requests * 100.0,
         };
         let histogram = histogram.lock().await;
-        let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
+        let total_response_size_kb = total_response_size.load(Ordering::SeqCst) as f64 / 1024.0;
         let throughput_kb_s = total_response_size_kb / total_duration;
         let http_errors = http_errors.lock().await.errors.clone();
         let assert_errors = assert_error.lock().await.errors.clone();
@@ -71,7 +71,7 @@ pub(crate) async fn collect_results(
             let rps = res.total_requests as f64 / total_duration;
             api_results[index].rps = rps;
         }
-        let total_concurrent_number = *concurrent_number.lock().await;
+        let total_concurrent_number = concurrent_number.load(Ordering::SeqCst) as i32;
         let mut queue = RESULTS_QUEUE.lock().await;
         if queue.len() == 1 {
             queue.pop_front();

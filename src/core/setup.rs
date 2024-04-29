@@ -43,24 +43,23 @@ pub async fn start_setup(
         // 将header替换
         headers.iter_mut().for_each(|(_key, value)| {
             let handlebars = Handlebars::new();
-            let val_str = match value.to_str(){
-                Ok(v) => {v}
+            let val_str = match value.to_str() {
+                Ok(v) => v,
                 Err(e) => {
                     eprintln!("设置header失败::{:?}", e.to_string());
-                    return
+                    return;
                 }
             };
-            let new_val =
-                match handlebars.render_template(val_str, &json!(extract_map)) {
-                    Ok(v) => {
-                        let header_value = v.parse::<HeaderValue>().expect("无效的header值");
-                        header_value
-                    }
-                    Err(e) => {
-                        eprintln!("{:?}", e);
-                        value.clone()
-                    }
-                };
+            let new_val = match handlebars.render_template(val_str, &json!(extract_map)) {
+                Ok(v) => {
+                    let header_value = v.parse::<HeaderValue>().expect("无效的header值");
+                    header_value
+                }
+                Err(e) => {
+                    eprintln!("{:?}", e);
+                    value.clone()
+                }
+            };
             *value = new_val;
         });
         request = request.headers(headers);
@@ -129,11 +128,9 @@ pub async fn start_setup(
                         // 将响应转换为json
                         let json_value: Value = match serde_json::from_slice(&*body_bytes) {
                             Err(e) => {
-                                let err_msg = match String::from_utf8(body_bytes){
-                                    Ok(msg) => {msg}
-                                    Err(e) => {
-                                        e.to_string()
-                                    }
+                                let err_msg = match String::from_utf8(body_bytes) {
+                                    Ok(msg) => msg,
+                                    Err(e) => e.to_string(),
                                 };
                                 return Err(Error::msg(format!(
                                     "转换json失败:{:?}, 原始json: {:?}",
