@@ -19,43 +19,43 @@ mod tests {
         });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
 
-        // endpoints.push(ApiEndpoint {
-        //     name: "有断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
-        //     method: "GET".to_string(),
-        //     weight: 1,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: Some(assert_vec.clone()),
-        //     // think_time_option: Some(ThinkTime {
-        //     //     min_millis: 300,
-        //     //     max_millis: 500,
-        //     // }),
-        //     think_time_option: None,
-        //     setup_options: None,
-        // });
-        // //
-        // endpoints.push(ApiEndpoint {
-        //     name: "无断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "POST".to_string(),
-        //     weight: 3,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: None,
-        //     think_time_option: None,
-        //     setup_options: None,
-        // });
+        endpoints.push(ApiEndpoint {
+            name: "有断言".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
+            method: "GET".to_string(),
+            weight: 1,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: None,
+            assert_options: Some(assert_vec.clone()),
+            // think_time_option: Some(ThinkTime {
+            //     min_millis: 300,
+            //     max_millis: 500,
+            // }),
+            think_time_option: None,
+            setup_options: None,
+        });
         //
+        endpoints.push(ApiEndpoint {
+            name: "无断言".to_string(),
+            url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
+            method: "POST".to_string(),
+            weight: 3,
+            json: None,
+            form_data: None,
+            headers: None,
+            cookies: None,
+            assert_options: None,
+            think_time_option: None,
+            setup_options: None,
+        });
+
         endpoints.push(ApiEndpoint {
             name: "test-1".to_string(),
             url: "http://127.0.0.1:8080/direct".to_string(),
             method: "POST".to_string(),
-            weight: 1,
+            weight: 100,
             json: Some(json!({"name": "test","number": 10086})),
             headers: None,
             cookies: None,
