@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::error::Error as std_error;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::mpsc::Sender;
@@ -27,8 +27,8 @@ use tokio::sync::{oneshot, Mutex};
 pub(crate) async fn start_concurrency(
     client: Client,
     controller_arc: Arc<ConcurrencyController>,
-    api_concurrent_number_arc: Arc<Mutex<i32>>,
-    concurrent_number_arc: Arc<Mutex<i32>>,
+    api_concurrent_number_arc: Arc<AtomicUsize>,
+    concurrent_number_arc: Arc<AtomicUsize>,
     extract_map_arc: Arc<Mutex<BTreeMap<String, Value>>>,
     endpoint_arc: Arc<Mutex<ApiEndpoint>>,
     total_requests_arc: Arc<AtomicUsize>,
@@ -43,7 +43,7 @@ pub(crate) async fn start_concurrency(
     api_total_response_size_arc: Arc<Mutex<u64>>,
     api_err_count_arc: Arc<Mutex<i32>>,
     successful_requests_arc: Arc<AtomicUsize>,
-    err_count_arc: Arc<Mutex<i32>>,
+    err_count_arc: Arc<AtomicUsize>,
     http_errors_arc: Arc<Mutex<HttpErrorStats>>,
     assert_errors_arc: Arc<Mutex<AssertErrorStats>>,
     api_successful_requests_arc: Arc<AtomicUsize>,
@@ -60,8 +60,8 @@ pub(crate) async fn start_concurrency(
     let semaphore = controller_arc.get_semaphore();
     let _permit = semaphore.acquire().await.expect("获取信号量许可失败");
     // 统计并发数
-    *api_concurrent_number_arc.lock().await += 1;
-    *concurrent_number_arc.lock().await += 1;
+    api_concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
+    concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
     'RETRY: while Instant::now() < test_end {
         // 设置api的提取器
         let mut api_extract_b_tree_map = BTreeMap::new();
@@ -330,7 +330,7 @@ pub(crate) async fn start_concurrency(
                                 }
                                 Err(e) => {
                                     *api_err_count_arc.lock().await += 1;
-                                    *err_count_arc.lock().await += 1;
+                                    err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     http_errors_arc
                                         .lock()
                                         .await
@@ -338,12 +338,8 @@ pub(crate) async fn start_concurrency(
                                             api_name_clone.clone(),
                                             url_clone.clone(),
                                             match e.status() {
-                                                None => {
-                                                    0u16
-                                                }
-                                                Some(status_code) => {
-                                                    status_code.as_u16()
-                                                }
+                                                None => 0u16,
+                                                Some(status_code) => status_code.as_u16(),
                                             },
                                             e.to_string(),
                                             match e.source() {
@@ -400,7 +396,8 @@ pub(crate) async fn start_concurrency(
                         {
                             let api_total_data_bytes = *api_total_response_size_arc.lock().await;
                             let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                            let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
+                            let api_total_requests =
+                                api_total_requests_arc.load(Ordering::SeqCst) as u64;
                             let api_success_requests =
                                 api_successful_requests_arc.load(Ordering::SeqCst);
                             let api_success_rate =
@@ -425,7 +422,8 @@ pub(crate) async fn start_concurrency(
                             api_res.error_rate =
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
                             api_res.method = method_clone.clone().to_uppercase();
-                            api_res.concurrent_number = *api_concurrent_number_arc.lock().await;
+                            api_res.concurrent_number =
+                                api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
                             // 向最终结果中添加数据
                             let mut res = results_arc.lock().await;
                             match index < res.len() {
@@ -443,7 +441,7 @@ pub(crate) async fn start_concurrency(
                     _ => {
                         // 响应时间
                         let duration = start.elapsed().as_millis() as u64;
-                        *err_count_arc.lock().await += 1;
+                        err_count_arc.fetch_add(1, Ordering::Relaxed);
                         *api_err_count_arc.lock().await += 1;
                         let status_code = u16::from(response.status());
                         let mut api_histogram = api_histogram_arc.lock().await;
@@ -497,20 +495,16 @@ pub(crate) async fn start_concurrency(
                                 }
                                 Err(e) => {
                                     *api_err_count_arc.lock().await += 1;
-                                    *err_count_arc.lock().await += 1;
+                                    err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     http_errors_arc
                                         .lock()
                                         .await
                                         .increment(
                                             api_name_clone.clone(),
                                             url_clone.clone(),
-                                            match e.status(){
-                                                None => {
-                                                    0u16
-                                                }
-                                                Some(status_code) => {
-                                                    status_code.as_u16()
-                                                }
+                                            match e.status() {
+                                                None => 0u16,
+                                                Some(status_code) => status_code.as_u16(),
                                             },
                                             e.to_string(),
                                             match e.source() {
@@ -532,8 +526,10 @@ pub(crate) async fn start_concurrency(
                         // 获取需要等待的对象
                         let api_total_data_bytes = *api_total_response_size_arc.lock().await;
                         let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                        let api_total_requests = api_total_requests_arc.load(Ordering::SeqCst) as u64;
-                        let api_success_requests = api_successful_requests_arc.load(Ordering::SeqCst);
+                        let api_total_requests =
+                            api_total_requests_arc.load(Ordering::SeqCst) as u64;
+                        let api_success_requests =
+                            api_successful_requests_arc.load(Ordering::SeqCst);
                         let api_success_rate =
                             api_success_requests as f64 / api_total_requests as f64 * 100.0;
                         let throughput_per_second_kb =
@@ -578,7 +574,8 @@ pub(crate) async fn start_concurrency(
                             api_res.error_rate =
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
                             api_res.method = method_clone.clone().to_uppercase();
-                            api_res.concurrent_number = *api_concurrent_number_arc.lock().await;
+                            api_res.concurrent_number =
+                                api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
                             // 向最终结果中添加数据
                             let mut res = results_arc.lock().await;
                             match index < res.len() {
@@ -598,7 +595,7 @@ pub(crate) async fn start_concurrency(
                 total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 // api请求数
                 api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
-                *err_count_arc.lock().await += 1;
+                err_count_arc.fetch_add(1, Ordering::Relaxed);
                 *api_err_count_arc.lock().await += 1;
                 let status_code: u16;
                 match e.status() {

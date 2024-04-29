@@ -1,7 +1,7 @@
-use std::sync::atomic::Ordering;
 use crate::models::assert_task::AssertTask;
 use jsonpath_lib::select;
 use serde_json::Value;
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
 // todo: 断言可以使用模板
@@ -15,7 +15,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                         if task.verbose{
                             eprintln!("JSONPath 查询失败: {}", e);
                         };
-                        *task.err_count.lock().await += 1;
+                        task.err_count.fetch_add(1, Ordering::Relaxed);
                         *task.api_err_count.lock().await += 1;
                         assertion_failed = true;
                         task.assert_errors.lock().await.increment(
@@ -43,7 +43,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                                     if task.verbose{
                                         eprintln!("没有匹配到任何结果");
                                     }
-                                    *task.err_count.lock().await += 1;
+                                    task.err_count.fetch_add(1, Ordering::Relaxed);
                                     *task.api_err_count.lock().await += 1;
                                     task.assert_errors.lock().await.increment(
                             task.api_name.clone(),
@@ -57,7 +57,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                                     if task.verbose{
                                         eprintln!("匹配到多个值，无法进行断言");
                                     }
-                                    *task.err_count.lock().await += 1;
+                                    task.err_count.fetch_add(1, Ordering::Relaxed);
                                     *task.api_err_count.lock().await += 1;
                                     task.assert_errors.lock().await.increment(
                             task.api_name.clone(),
@@ -86,7 +86,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                                             eprintln!("{:?}-预期结果：{:?}, 实际结果：{:?}",task.api_name ,assert_option.reference_object, result)
                                         }
                                         // 错误数据增加
-                                        *task.err_count.lock().await += 1;
+                                        task.err_count.fetch_add(1, Ordering::Relaxed);
                                         *task.api_err_count.lock().await += 1;
                                         // 退出断言
                                         assertion_failed = true;

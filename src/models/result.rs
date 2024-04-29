@@ -1,7 +1,7 @@
+use crate::models::assert_error_stats::AssertErrKey;
 use crate::models::http_error_stats::HttpErrKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::models::assert_error_stats::AssertErrKey;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestResult {
