@@ -61,8 +61,8 @@ pub(crate) async fn start_concurrency(
     let _permit = semaphore.acquire().await.expect("获取信号量许可失败");
     // 统计并发数
     api_concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
-    let cn = concurrent_number_arc.fetch_add(1, Ordering::Relaxed) as i32 + 1;
-    results_arc.lock().await[index].concurrent_number = cn;
+    let current_concurrency = concurrent_number_arc.fetch_add(1, Ordering::Relaxed) as i32 + 1;
+    results_arc.lock().await[index].concurrent_number = current_concurrency;
     'RETRY: while Instant::now() < test_end {
         // 设置api的提取器
         let mut api_extract_b_tree_map = BTreeMap::new();

@@ -210,14 +210,14 @@ pub async fn batch(
         // 接口响应大小
         let api_total_response_size = Arc::new(AtomicUsize::new(0));
         // 初始化api结果
-        let api_result = Arc::new(Mutex::new({
-            let mut api_result = ApiResult::new();
-            api_result.name = name.clone();
-            api_result.url = api_url.clone();
-            api_result.method = endpoint_arc.lock().await.method.clone();
-            api_result
-        }));
-        results_arc.lock().await.push(api_result.lock().await.clone());
+        let mut init_api_res = ApiResult::new();
+        init_api_res.name = name.clone();
+        init_api_res.url = api_url.clone();
+        init_api_res.method = endpoint_arc.lock().await.method.clone().to_uppercase();
+        // 包装初始化好的接口信息
+        let api_result = Arc::new(Mutex::new(init_api_res.clone()));
+        // 将初始化好的接口信息添加到list中
+        results_arc.lock().await.push(init_api_res);
         // 根据step初始化并发控制器
         let controller = match step_option.clone() {
             None => Arc::new(ConcurrencyController::new(concurrency_for_endpoint, None)),
