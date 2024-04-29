@@ -181,7 +181,6 @@ pub async fn batch(
             false => endpoint.url.clone(),
         };
         drop(endpoint);
-        results_arc.lock().await.push(ApiResult::new());
         // 计算权重比例
         let weight_ratio = weight as f64 / total_weight as f64;
         // 计算每个接口的并发量
@@ -215,8 +214,10 @@ pub async fn batch(
             let mut api_result = ApiResult::new();
             api_result.name = name.clone();
             api_result.url = api_url.clone();
+            api_result.method = endpoint_arc.lock().await.method.clone();
             api_result
         }));
+        results_arc.lock().await.push(api_result.lock().await.clone());
         // 根据step初始化并发控制器
         let controller = match step_option.clone() {
             None => Arc::new(ConcurrencyController::new(concurrency_for_endpoint, None)),

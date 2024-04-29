@@ -61,7 +61,8 @@ pub(crate) async fn start_concurrency(
     let _permit = semaphore.acquire().await.expect("获取信号量许可失败");
     // 统计并发数
     api_concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
-    concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
+    let cn = concurrent_number_arc.fetch_add(1, Ordering::Relaxed) as i32 + 1;
+    results_arc.lock().await[index].concurrent_number = cn;
     'RETRY: while Instant::now() < test_end {
         // 设置api的提取器
         let mut api_extract_b_tree_map = BTreeMap::new();
@@ -419,7 +420,6 @@ pub(crate) async fn start_concurrency(
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
                             api_res.error_rate =
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
-                            api_res.method = method_clone.clone().to_uppercase();
                             api_res.concurrent_number =
                                 api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
                             // 向最终结果中添加数据
@@ -569,7 +569,6 @@ pub(crate) async fn start_concurrency(
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
                             api_res.error_rate =
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
-                            api_res.method = method_clone.clone().to_uppercase();
                             api_res.concurrent_number =
                                 api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
                             // 向最终结果中添加数据
