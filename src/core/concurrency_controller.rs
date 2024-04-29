@@ -25,7 +25,10 @@ impl ConcurrencyController {
     pub async fn distribute_permits(&self) {
         match &self.step_option {
             Some(step_option) => {
-                let mut permits_added = 0usize;
+                // 无论如何都先添加一个许可
+                self.semaphore.add_permits(1);
+                // 记录已经添加过的许可
+                let mut permits_added = 1usize;
                 {
                     let mut fractional_accumulator = self.fractional_accumulator.lock().await;
                     *fractional_accumulator += step_option.increase_step;
