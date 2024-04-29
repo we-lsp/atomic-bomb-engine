@@ -39,8 +39,8 @@ pub(crate) async fn start_concurrency(
     api_max_response_time_arc: Arc<Mutex<u64>>,
     min_response_time_arc: Arc<Mutex<u64>>,
     api_min_response_time_arc: Arc<Mutex<u64>>,
-    total_response_size_arc: Arc<Mutex<u64>>,
-    api_total_response_size_arc: Arc<Mutex<u64>>,
+    total_response_size_arc: Arc<AtomicUsize>,
+    api_total_response_size_arc: Arc<AtomicUsize>,
     api_err_count_arc: Arc<AtomicUsize>,
     successful_requests_arc: Arc<AtomicUsize>,
     err_count_arc: Arc<AtomicUsize>,
@@ -308,10 +308,8 @@ pub(crate) async fn start_concurrency(
                         });
                         // 将响应头的大小加入到总大小中
                         {
-                            let mut total_size = total_response_size_arc.lock().await;
-                            *total_size += headers_size as u64;
-                            let mut api_total_size = api_total_response_size_arc.lock().await;
-                            *api_total_size += headers_size as u64;
+                            total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
+                            api_total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
                         }
                         // 响应流
                         let mut stream = response.bytes_stream();
@@ -321,11 +319,8 @@ pub(crate) async fn start_concurrency(
                             match item {
                                 Ok(chunk) => {
                                     // 获取当前的chunk
-                                    let mut total_size = total_response_size_arc.lock().await;
-                                    *total_size += chunk.len() as u64;
-                                    let mut api_total_size =
-                                        api_total_response_size_arc.lock().await;
-                                    *api_total_size += chunk.len() as u64;
+                                    total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
+                                    api_total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
                                     body_bytes.extend_from_slice(&chunk);
                                 }
                                 Err(e) => {
@@ -394,7 +389,7 @@ pub(crate) async fn start_concurrency(
                         };
                         // 给结果赋值
                         {
-                            let api_total_data_bytes = *api_total_response_size_arc.lock().await;
+                            let api_total_data_bytes = api_total_response_size_arc.load(Ordering::SeqCst);
                             let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                             let api_total_requests =
                                 api_total_requests_arc.load(Ordering::SeqCst) as u64;
@@ -473,10 +468,8 @@ pub(crate) async fn start_concurrency(
                         });
                         // 将响应头的大小加入到总大小中
                         {
-                            let mut total_size = total_response_size_arc.lock().await;
-                            *total_size += headers_size as u64;
-                            let mut api_total_size = api_total_response_size_arc.lock().await;
-                            *api_total_size += headers_size as u64;
+                            total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
+                            api_total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
                         }
                         // 响应流
                         let mut stream = response.bytes_stream();
@@ -486,11 +479,8 @@ pub(crate) async fn start_concurrency(
                             match item {
                                 Ok(chunk) => {
                                     // 获取当前的chunk
-                                    let mut total_size = total_response_size_arc.lock().await;
-                                    *total_size += chunk.len() as u64;
-                                    let mut api_total_size =
-                                        api_total_response_size_arc.lock().await;
-                                    *api_total_size += chunk.len() as u64;
+                                    total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
+                                    api_total_response_size_arc.fetch_add(chunk.len(), Ordering::Relaxed);
                                     body_bytes.extend_from_slice(&chunk);
                                 }
                                 Err(e) => {
@@ -524,7 +514,7 @@ pub(crate) async fn start_concurrency(
                             String::from_utf8(body_bytes_clone).expect("无法转换响应体为字符串");
                         eprintln!("{:+?}", buffer);
                         // 获取需要等待的对象
-                        let api_total_data_bytes = *api_total_response_size_arc.lock().await;
+                        let api_total_data_bytes = api_total_response_size_arc.load(Ordering::SeqCst);
                         let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
                         let api_total_requests =
                             api_total_requests_arc.load(Ordering::SeqCst) as u64;

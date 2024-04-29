@@ -80,7 +80,7 @@ pub async fn batch(
     // 接口线程池
     let mut handles: Vec<JoinHandle<Result<(), Error>>> = Vec::new();
     // 统计响应大小
-    let total_response_size = Arc::new(Mutex::new(0u64));
+    let total_response_size = Arc::new(AtomicUsize::new(0));
     // 统计http错误
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
     // 统计断言错误
@@ -209,7 +209,7 @@ pub async fn batch(
         // 接口并发数统计
         let api_concurrent_number = Arc::new(AtomicUsize::new(0));
         // 接口响应大小
-        let api_total_response_size = Arc::new(Mutex::new(0u64));
+        let api_total_response_size = Arc::new(AtomicUsize::new(0));
         // 初始化api结果
         let api_result = Arc::new(Mutex::new({
             let mut api_result = ApiResult::new();
@@ -328,7 +328,7 @@ pub async fn batch(
     let successful_requests = successful_requests.load(Ordering::SeqCst) as f64;
     let success_rate = successful_requests / total_requests as f64 * 100.0;
     let histogram = histogram.lock().await;
-    let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
+    let total_response_size_kb = total_response_size.load(Ordering::SeqCst) as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors = http_errors.lock().await.errors.clone();
     let assert_errors = assert_errors.lock().await.errors.clone();

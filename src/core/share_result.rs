@@ -13,7 +13,7 @@ pub(crate) async fn collect_results(
     total_requests: Arc<AtomicUsize>,
     successful_requests: Arc<AtomicUsize>,
     histogram: Arc<Mutex<Histogram>>,
-    total_response_size: Arc<Mutex<u64>>,
+    total_response_size: Arc<AtomicUsize>,
     http_errors: Arc<Mutex<HttpErrorStats>>,
     err_count: Arc<AtomicUsize>,
     max_resp_time: Arc<Mutex<u64>>,
@@ -44,7 +44,7 @@ pub(crate) async fn collect_results(
             false => err_count as f64 / total_requests * 100.0,
         };
         let histogram = histogram.lock().await;
-        let total_response_size_kb = *total_response_size.lock().await as f64 / 1024.0;
+        let total_response_size_kb = total_response_size.load(Ordering::SeqCst) as f64 / 1024.0;
         let throughput_kb_s = total_response_size_kb / total_duration;
         let http_errors = http_errors.lock().await.errors.clone();
         let assert_errors = assert_error.lock().await.errors.clone();
