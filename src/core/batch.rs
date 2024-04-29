@@ -205,9 +205,8 @@ pub async fn batch(
         // 接口统计最小响应时间
         let api_min_response_time = Arc::new(Mutex::new(u64::MAX));
         // 接口统计错误数量
-        let api_err_count = Arc::new(Mutex::new(0));
+        let api_err_count = Arc::new(AtomicUsize::new(0));
         // 接口并发数统计
-        // TODO: 使用无锁计数器
         let api_concurrent_number = Arc::new(AtomicUsize::new(0));
         // 接口响应大小
         let api_total_response_size = Arc::new(Mutex::new(0u64));

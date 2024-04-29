@@ -12,7 +12,7 @@ pub struct AssertTask {
     pub(crate) body_bytes: Vec<u8>,
     pub(crate) verbose: bool,
     pub(crate) err_count: Arc<AtomicUsize>,
-    pub(crate) api_err_count: Arc<Mutex<i32>>,
+    pub(crate) api_err_count: Arc<AtomicUsize>,
     pub(crate) assert_errors: Arc<Mutex<AssertErrorStats>>,
     pub(crate) endpoint: Arc<Mutex<ApiEndpoint>>,
     pub(crate) api_name: String,

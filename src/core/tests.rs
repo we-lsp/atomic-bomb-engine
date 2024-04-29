@@ -1,16 +1,13 @@
-use serde_json::{json, Value};
-use crate::core::batch::batch;
-use crate::models::api_endpoint::ApiEndpoint;
-use crate::models::setup::SetupApiEndpoint;
-use crate::models::step_option::StepOption;
-
 #[cfg(test)]
 mod tests {
     use core::option::Option;
-
+    use serde_json::{json, Value};
+    use crate::core::batch::batch;
     use crate::models::assert_option::AssertOption;
     use crate::models::setup::JsonpathExtract;
-
+    use crate::models::api_endpoint::ApiEndpoint;
+    use crate::models::setup::SetupApiEndpoint;
+    use crate::models::step_option::StepOption;
     use super::*;
 
     #[tokio::test]

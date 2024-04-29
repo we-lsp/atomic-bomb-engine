@@ -41,7 +41,7 @@ pub(crate) async fn start_concurrency(
     api_min_response_time_arc: Arc<Mutex<u64>>,
     total_response_size_arc: Arc<Mutex<u64>>,
     api_total_response_size_arc: Arc<Mutex<u64>>,
-    api_err_count_arc: Arc<Mutex<i32>>,
+    api_err_count_arc: Arc<AtomicUsize>,
     successful_requests_arc: Arc<AtomicUsize>,
     err_count_arc: Arc<AtomicUsize>,
     http_errors_arc: Arc<Mutex<HttpErrorStats>>,
@@ -329,7 +329,7 @@ pub(crate) async fn start_concurrency(
                                     body_bytes.extend_from_slice(&chunk);
                                 }
                                 Err(e) => {
-                                    *api_err_count_arc.lock().await += 1;
+                                    api_err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     http_errors_arc
                                         .lock()
@@ -417,7 +417,7 @@ pub(crate) async fn start_concurrency(
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
                             api_res.success_rate = api_success_rate;
-                            api_res.err_count = *api_err_count_arc.lock().await;
+                            api_res.err_count = api_err_count_arc.load(Ordering::SeqCst) as i32;
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
                             api_res.error_rate =
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
@@ -442,7 +442,7 @@ pub(crate) async fn start_concurrency(
                         // 响应时间
                         let duration = start.elapsed().as_millis() as u64;
                         err_count_arc.fetch_add(1, Ordering::Relaxed);
-                        *api_err_count_arc.lock().await += 1;
+                        api_err_count_arc.fetch_add(1, Ordering::Relaxed);
                         let status_code = u16::from(response.status());
                         let mut api_histogram = api_histogram_arc.lock().await;
                         // 最大请求时间
@@ -494,7 +494,7 @@ pub(crate) async fn start_concurrency(
                                     body_bytes.extend_from_slice(&chunk);
                                 }
                                 Err(e) => {
-                                    *api_err_count_arc.lock().await += 1;
+                                    api_err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     http_errors_arc
                                         .lock()
@@ -569,7 +569,7 @@ pub(crate) async fn start_concurrency(
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
                             api_res.success_rate = api_success_rate;
-                            api_res.err_count = *api_err_count_arc.lock().await;
+                            api_res.err_count = api_err_count_arc.load(Ordering::SeqCst) as i32;
                             api_res.throughput_per_second_kb = throughput_per_second_kb;
                             api_res.error_rate =
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
@@ -596,7 +596,7 @@ pub(crate) async fn start_concurrency(
                 // api请求数
                 api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 err_count_arc.fetch_add(1, Ordering::Relaxed);
-                *api_err_count_arc.lock().await += 1;
+                api_err_count_arc.fetch_add(1, Ordering::Relaxed);
                 let status_code: u16;
                 match e.status() {
                     None => {
