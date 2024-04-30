@@ -28,10 +28,10 @@ impl ConcurrencyController {
                 // 记录已经添加过的许可
                 let mut permits_added = 0usize;
                 // 如果是一个，就直接添加一个许可
-                // if step_option.increase_step == 1.0{
-                //     self.semaphore.add_permits(1usize);
-                //     permits_added = 1usize;
-                // }
+                if self.total_permits == 1{
+                    self.semaphore.add_permits(1usize);
+                    permits_added += 1usize;
+                }
                 // 不足1的部分进行累加
                 {
                     let mut fractional_accumulator = self.fractional_accumulator.lock().await;

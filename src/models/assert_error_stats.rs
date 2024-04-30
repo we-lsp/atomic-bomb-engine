@@ -3,12 +3,15 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use url::Url;
 
 #[derive(Debug, Eq, Clone, Serialize, Deserialize)]
 pub struct AssertErrKey {
     pub name: String,
     pub msg: String,
     pub url: String,
+    pub host: String,
+    pub path: String,
 }
 
 impl PartialEq for AssertErrKey {
@@ -25,7 +28,6 @@ impl Hash for AssertErrKey {
 
 #[derive(Clone, Debug)]
 pub struct AssertErrorStats {
-    // {(url, 错误信息): 次数}
     pub(crate) errors: Arc<Mutex<HashMap<AssertErrKey, u32>>>,
 }
 
@@ -37,8 +39,27 @@ impl AssertErrorStats {
     }
 
     // 增加一个错误和对应的出现次数
-    pub(crate) async fn increment(&self, name: String, msg: String, url: String) {
+    pub(crate) async fn increment(&self, name: String, msg: String, url_s: String) {
+        let url = url_s.clone();
+        let mut host = "-".to_string();
+        let mut path = "-".to_string();
+        if let Ok(u) = Url::parse(&url_s) {
+            host = match u.host() {
+                None => "-".to_string(),
+                Some(h) => h.to_string(),
+            };
+            path = u.path().to_string();
+        };
+
         let mut errors = self.errors.lock().await;
-        *errors.entry(AssertErrKey { name, msg, url }).or_insert(0) += 1;
+        *errors
+            .entry(AssertErrKey {
+                name,
+                msg,
+                url,
+                host,
+                path,
+            })
+            .or_insert(0) += 1;
     }
 }

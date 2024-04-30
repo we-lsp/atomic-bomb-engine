@@ -1,3 +1,4 @@
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -11,6 +12,8 @@ pub struct HttpErrKey {
     pub msg: String,
     pub url: String,
     pub source: String,
+    pub host: String,
+    pub path: String,
 }
 
 impl PartialEq for HttpErrKey {
@@ -47,19 +50,31 @@ impl HttpErrorStats {
     pub(crate) async fn increment(
         &self,
         name: String,
-        url: String,
+        url_option: Option<&Url>,
         code: u16,
         msg: String,
         source: String,
     ) {
+        let mut url = "-".to_string();
+        let mut host = "-".to_string();
+        let mut path = "-".to_string();
+        if let Some(u) = url_option {
+            url = u.to_string();
+            if let Some(h) = u.host() {
+                host = h.to_string();
+            };
+            path = u.path().to_string();
+        };
         let mut errors = self.errors.lock().await;
         *errors
             .entry(HttpErrKey {
                 name,
-                url,
                 code,
                 msg,
+                url,
                 source,
+                host,
+                path,
             })
             .or_insert(0) += 1;
     }
