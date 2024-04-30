@@ -28,7 +28,7 @@ impl ConcurrencyController {
                 // 记录已经添加过的许可
                 let mut permits_added = 0usize;
                 // 如果是一个，就直接添加一个许可
-                if self.total_permits == 1{
+                if self.total_permits == 1 {
                     self.semaphore.add_permits(1usize);
                     permits_added += 1usize;
                 }
