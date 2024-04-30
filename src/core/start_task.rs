@@ -99,8 +99,6 @@ pub(crate) async fn start_concurrency(
         }
         // api名称副本
         let api_name_clone = endpoint_arc.lock().await.name.clone();
-        // url副本
-        let url_clone = endpoint_arc.lock().await.url.clone();
         // 请求方法副本
         let method_clone = endpoint_arc.lock().await.method.clone();
         // json副本
@@ -256,6 +254,7 @@ pub(crate) async fn start_concurrency(
                 api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
                 // 获取状态码
                 let status = response.status();
+                let url_parse = response.url().clone();
                 match status {
                     // 正确的状态码
                     StatusCode::OK
@@ -334,7 +333,7 @@ pub(crate) async fn start_concurrency(
                                         .await
                                         .increment(
                                             api_name_clone.clone(),
-                                            url_clone.clone(),
+                                            e.url(),
                                             match e.status() {
                                                 None => 0u16,
                                                 Some(status_code) => status_code.as_u16(),
@@ -496,7 +495,7 @@ pub(crate) async fn start_concurrency(
                                         .await
                                         .increment(
                                             api_name_clone.clone(),
-                                            url_clone.clone(),
+                                            e.url(),
                                             match e.status() {
                                                 None => 0u16,
                                                 Some(status_code) => status_code.as_u16(),
@@ -537,7 +536,7 @@ pub(crate) async fn start_concurrency(
                             .await
                             .increment(
                                 api_name_clone.clone(),
-                                url_clone.clone(),
+                                Some(&url_parse),
                                 status.as_u16(),
                                 err_msg,
                                 "-".to_string(),
@@ -612,7 +611,7 @@ pub(crate) async fn start_concurrency(
                     .await
                     .increment(
                         endpoint_arc.lock().await.name.clone(),
-                        url_clone.clone(),
+                        err.url(),
                         status_code,
                         err.to_string(),
                         err_source,
