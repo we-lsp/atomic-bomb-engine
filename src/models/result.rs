@@ -48,6 +48,8 @@ pub struct BatchResult {
 pub struct ApiResult {
     pub name: String,
     pub url: String,
+    pub host: String,
+    pub path: String,
     pub method: String,
     pub success_rate: f64,
     pub error_rate: f64,
@@ -69,6 +71,8 @@ impl ApiResult {
         Self {
             name: String::new(),
             url: String::new(),
+            host: String::new(),
+            path: String::new(),
             method: String::new(),
             success_rate: 0.0,
             error_rate: 0.0,
