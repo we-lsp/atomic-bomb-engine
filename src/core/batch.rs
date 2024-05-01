@@ -14,6 +14,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
+use url::Url;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
@@ -338,10 +339,18 @@ pub async fn batch(
         Err(_) => 0,
     };
     let mut api_results = results_arc.lock().await;
-    // 计算每个接口的rps
+    // 计算每个接口的rps,host, path
     for (index, res) in api_results.clone().into_iter().enumerate() {
+        // 计算每个接口的rps
         let rps = res.total_requests as f64 / total_duration;
         api_results[index].rps = rps;
+        // 计算每个接口的HOST，PATH
+        if let Ok(url) = Url::parse(&*res.url){
+            if let Some(host) = url.host(){
+                api_results[index].host = host.to_string();
+            };
+            api_results[index].path = url.path().to_string();
+        };
     }
     let error_rate = err_count as f64 / total_requests as f64 * 100.0;
     let total_concurrent_number_clone = concurrent_number.load(Ordering::SeqCst) as i32;

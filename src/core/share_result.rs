@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tokio::time::interval;
+use url::Url;
 
 pub(crate) async fn collect_results(
     total_requests: Arc<AtomicUsize>,
@@ -66,10 +67,18 @@ pub(crate) async fn collect_results(
             Err(_) => 0,
         };
         let mut api_results = api_results.lock().await;
-        // 计算每个接口的rps
+        // 计算每个接口的rps,host, path
         for (index, res) in api_results.clone().into_iter().enumerate() {
+            // 计算每个接口的rps
             let rps = res.total_requests as f64 / total_duration;
             api_results[index].rps = rps;
+            // 计算每个接口的HOST，PATH
+            if let Ok(url) = Url::parse(&*res.url){
+                if let Some(host) = url.host(){
+                    api_results[index].host = host.to_string();
+                };
+                api_results[index].path = url.path().to_string();
+            };
         }
         let total_concurrent_number = concurrent_number.load(Ordering::SeqCst) as i32;
         let mut queue = RESULTS_QUEUE.lock().await;
