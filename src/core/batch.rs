@@ -76,6 +76,8 @@ pub async fn batch(
     let min_response_time = Arc::new(Mutex::new(u64::MAX));
     // 统计错误数量
     let err_count = Arc::new(AtomicUsize::new(0));
+    // 统计每秒错误数
+    let number_of_last_errors = Arc::new(AtomicUsize::new(0));
     // 已开始并发数
     let concurrent_number = Arc::new(AtomicUsize::new(0));
     // 接口线程池
@@ -296,6 +298,7 @@ pub async fn batch(
         Arc::clone(&assert_errors),
         Arc::clone(&results_arc),
         Arc::clone(&concurrent_number),
+        Arc::clone(&number_of_last_errors),
         verbose,
         test_start,
     ));
@@ -345,8 +348,8 @@ pub async fn batch(
         let rps = res.total_requests as f64 / total_duration;
         api_results[index].rps = rps;
         // 计算每个接口的HOST，PATH
-        if let Ok(url) = Url::parse(&*res.url){
-            if let Some(host) = url.host(){
+        if let Ok(url) = Url::parse(&*res.url) {
+            if let Some(host) = url.host() {
                 api_results[index].host = host.to_string();
             };
             api_results[index].path = url.path().to_string();
@@ -354,6 +357,10 @@ pub async fn batch(
     }
     let error_rate = err_count as f64 / total_requests as f64 * 100.0;
     let total_concurrent_number_clone = concurrent_number.load(Ordering::SeqCst) as i32;
+    // 总错误数量减去上一次错误数量得出增量
+    let errors_per_second = err_count - number_of_last_errors.load(Ordering::SeqCst);
+    // 将增量累加到上一次错误数量
+    number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
     // 最终结果
     let result = Ok(BatchResult {
         total_duration,
@@ -374,6 +381,7 @@ pub async fn batch(
         assert_errors: assert_errors.lock().await.clone(),
         total_concurrent_number: total_concurrent_number_clone,
         api_results: api_results.to_vec().clone(),
+        errors_per_second,
     });
     let mut should_stop = RESULTS_SHOULD_STOP.lock().await;
     *should_stop = true;
