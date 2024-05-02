@@ -24,24 +24,44 @@ pub struct TestResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchResult {
+    // 运行时间
     pub total_duration: f64,
+    // 成功率
     pub success_rate: f64,
+    // 错误率
     pub error_rate: f64,
+    // 中位响应时间
     pub median_response_time: u64,
+    // 95位响应时间
     pub response_time_95: u64,
+    // 99位响应时间
     pub response_time_99: u64,
+    // 总请求数
     pub total_requests: u64,
+    // rps
     pub rps: f64,
+    // 最大响应时间
     pub max_response_time: u64,
+    // 最小响应时间
     pub min_response_time: u64,
+    // 错误数量
     pub err_count: i32,
+    // 总响应数据量(KB)
     pub total_data_kb: f64,
+    // 每秒响应数据量
     pub throughput_per_second_kb: f64,
+    // http错误详情
     pub http_errors: HashMap<HttpErrKey, u32>,
+    // 时间戳
     pub timestamp: u128,
+    // 断言错误详情
     pub assert_errors: HashMap<AssertErrKey, u32>,
+    // 总并发数
     pub total_concurrent_number: i32,
+    // api响应详情
     pub api_results: Vec<ApiResult>,
+    // 每秒错误数
+    pub errors_per_second: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

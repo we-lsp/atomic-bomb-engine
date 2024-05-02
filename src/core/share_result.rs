@@ -22,6 +22,7 @@ pub(crate) async fn collect_results(
     assert_error: Arc<Mutex<AssertErrorStats>>,
     api_results: Arc<Mutex<Vec<ApiResult>>>,
     concurrent_number: Arc<AtomicUsize>,
+    number_of_last_errors: Arc<AtomicUsize>,
     verbose: bool,
     test_start: Instant,
 ) {
@@ -29,7 +30,6 @@ pub(crate) async fn collect_results(
     let should_stop = *RESULTS_SHOULD_STOP.lock().await;
     while !should_stop {
         interval.tick().await;
-
         let err_count = err_count.load(Ordering::SeqCst) as i32;
         let max_response_time_c = *max_resp_time.lock().await;
         let min_response_time_c = *min_resp_time.lock().await;
@@ -73,14 +73,19 @@ pub(crate) async fn collect_results(
             let rps = res.total_requests as f64 / total_duration;
             api_results[index].rps = rps;
             // 计算每个接口的HOST，PATH
-            if let Ok(url) = Url::parse(&*res.url){
-                if let Some(host) = url.host(){
+            if let Ok(url) = Url::parse(&*res.url) {
+                if let Some(host) = url.host() {
                     api_results[index].host = host.to_string();
                 };
                 api_results[index].path = url.path().to_string();
             };
         }
         let total_concurrent_number = concurrent_number.load(Ordering::SeqCst) as i32;
+        // 总错误数量减去上一次错误数量得出增量
+        let errors_per_second = err_count as usize - number_of_last_errors.load(Ordering::SeqCst);
+        // 将增量累加到上一次错误数量
+        number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
+        // 共享队列
         let mut queue = RESULTS_QUEUE.lock().await;
         if queue.len() == 1 {
             queue.pop_front();
@@ -104,6 +109,7 @@ pub(crate) async fn collect_results(
             assert_errors: assert_errors.lock().await.clone(),
             total_concurrent_number,
             api_results: api_results.to_vec().clone(),
+            errors_per_second,
         };
         let elapsed = test_start.elapsed();
         if verbose {
