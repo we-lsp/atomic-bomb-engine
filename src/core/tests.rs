@@ -63,6 +63,7 @@ mod tests {
             assert_options: Option::from(assert_vec),
             think_time_option: None,
             setup_options: None,
+            multipart_options: None,
         });
         let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();
         jsonpath_extracts.push(JsonpathExtract {
@@ -80,6 +81,7 @@ mod tests {
             method: "get".to_string(),
             json: None,
             form_data: None,
+            multipart_options: None,
             headers: None,
             cookies: None,
             jsonpath_extract: Some(jsonpath_extracts),

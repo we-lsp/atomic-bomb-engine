@@ -9,7 +9,7 @@ use anyhow::Error;
 use futures::future::join_all;
 use handlebars::Handlebars;
 use histogram::Histogram;
-use reqwest::header::{HeaderMap, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
@@ -124,7 +124,18 @@ pub async fn batch(
     let os_version = info.version().to_string();
     let app_name = env!("CARGO_PKG_NAME");
     let app_version = env!("CARGO_PKG_VERSION");
-    let user_agent_value = format!("{} {} ({}; {})", app_name, app_version, os_type, os_version);
+    let user_agent_value =
+        match format!("{} {} ({}; {})", app_name, app_version, os_type, os_version)
+            .parse::<HeaderValue>()
+        {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(Error::msg(format!(
+                    "解析user agent失败::{:?}",
+                    e.to_string()
+                )));
+            }
+        };
     let mut is_need_render_template = false;
     // 全局提取字典
     let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
@@ -133,7 +144,7 @@ pub async fn batch(
         .cookie_store(cookie_store_enable)
         .default_headers({
             let mut headers = HeaderMap::new();
-            headers.insert(USER_AGENT, user_agent_value.parse()?);
+            headers.insert(USER_AGENT, user_agent_value);
             headers
         });
     let client = match timeout_secs > 0 {
@@ -366,9 +377,30 @@ pub async fn batch(
         total_duration,
         success_rate,
         error_rate,
-        median_response_time: *histogram.percentile(50.0)?.range().start(),
-        response_time_95: *histogram.percentile(95.0)?.range().start(),
-        response_time_99: *histogram.percentile(99.0)?.range().start(),
+        median_response_time: match histogram.percentile(50.0){
+            Ok(b) => {
+                *b.range().start()
+            }
+            Err(e) => {
+                return Err(Error::msg(format!("获取50线失败::{:?}", e.to_string())));
+            }
+        },
+        response_time_95: match histogram.percentile(95.0){
+            Ok(b) => {
+                *b.range().start()
+            }
+            Err(e) => {
+                return Err(Error::msg(format!("获取95线失败::{:?}", e.to_string())));
+            }
+        },
+        response_time_99: match histogram.percentile(99.0) {
+            Ok(b) => {
+                *b.range().start()
+            }
+            Err(e) => {
+                return Err(Error::msg(format!("获取99线失败::{:?}", e.to_string())));
+            }
+        },
         total_requests,
         rps: total_requests as f64 / total_duration,
         max_response_time: *max_response_time.lock().await,

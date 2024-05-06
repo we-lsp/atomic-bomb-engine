@@ -1,6 +1,6 @@
 [package]
 name = "atomic-bomb-engine"
-version = "0.37.0"
+version = "0.38.0"
 edition = "2021"
 description = "A high performance torture testing engine"
 license = "MIT"
@@ -11,7 +11,7 @@ name = "atomic_bomb_engine"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest = { version = "0.12.4", features = ["json", "stream", "cookies"] }
+reqwest = { version = "0.12.4", features = ["json", "stream", "cookies", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 histogram = "0.10.0"
 anyhow = "1.0"
