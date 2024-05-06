@@ -12,7 +12,7 @@ use histogram::Histogram;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, COOKIE};
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{multipart, Client, Method, StatusCode};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::error::Error as std_error;
@@ -109,6 +109,8 @@ pub(crate) async fn start_concurrency(
         let json_obj_clone = endpoint_arc.lock().await.json.clone();
         // form副本
         let form_data_clone = endpoint_arc.lock().await.form_data.clone();
+        // multipart副本
+        let multipart_clone = endpoint_arc.lock().await.multipart_options.clone();
         // headers副本
         let headers_clone = endpoint_arc.lock().await.headers.clone();
         // cookie副本
@@ -118,8 +120,12 @@ pub(crate) async fn start_concurrency(
         // 思考时间副本
         let think_time_clone = endpoint_arc.lock().await.think_time_option.clone();
         // 构建请求方式
-        let method = Method::from_str(&method_clone.to_uppercase())
-            .map_err(|_| Error::msg("构建请求方法失败"))?;
+        let method = match Method::from_str(&method_clone.to_uppercase()) {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(Error::msg(format!("构建请求方法失败:{:?}", e.to_string())));
+            }
+        };
         // 构建请求
         let mut request = client.request(method, endpoint_arc.lock().await.url.clone());
         // 构建请求头
@@ -226,6 +232,31 @@ pub(crate) async fn start_concurrency(
                 })
             };
             request = request.form(&form_data);
+        };
+        // 构建multipart表单
+        if let Some(multipart_options) = multipart_clone {
+            // 初始化multipart表单
+            let mut multipart_form = multipart::Form::new();
+            // 构建multipart表单
+            for mo in multipart_options {
+                let file = match tokio::fs::File::open(mo.path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return Err(Error::msg(format!("打开文件出错::{:?}", e.to_string())));
+                    }
+                };
+                let part = match multipart::Part::stream(file)
+                    .file_name(mo.file_name)
+                    .mime_str(&*mo.mime)
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(Error::msg(format!("构建part失败::{:?}", e.to_string())));
+                    }
+                };
+                multipart_form = multipart_form.part(mo.form_key, part);
+            }
+            request = request.multipart(multipart_form);
         };
         if verbose {
             println!("{:?}", request);
@@ -408,12 +439,33 @@ pub(crate) async fn start_concurrency(
                                 api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
 
                             let mut api_res = api_result_arc.lock().await;
-                            api_res.response_time_95 =
-                                *api_histogram.percentile(95.0)?.range().start();
-                            api_res.response_time_99 =
-                                *api_histogram.percentile(99.0)?.range().start();
-                            api_res.median_response_time =
-                                *api_histogram.percentile(50.0)?.range().start();
+                            api_res.response_time_95 = match api_histogram.percentile(95.0) {
+                                Ok(b) => *b.range().start(),
+                                Err(e) => {
+                                    return Err(Error::msg(format!(
+                                        "获取95线失败::{:?}",
+                                        e.to_string()
+                                    )));
+                                }
+                            };
+                            api_res.response_time_99 = match api_histogram.percentile(99.0) {
+                                Ok(b) => *b.range().start(),
+                                Err(e) => {
+                                    return Err(Error::msg(format!(
+                                        "获取99线失败::{:?}",
+                                        e.to_string()
+                                    )));
+                                }
+                            };
+                            api_res.median_response_time = match api_histogram.percentile(50.0) {
+                                Ok(b) => *b.range().start(),
+                                Err(e) => {
+                                    return Err(Error::msg(format!(
+                                        "获取50线失败::{:?}",
+                                        e.to_string()
+                                    )));
+                                }
+                            };
                             api_res.max_response_time = *api_max_rt;
                             api_res.min_response_time = *api_min_rt;
                             api_res.total_requests = api_total_requests;
@@ -557,12 +609,33 @@ pub(crate) async fn start_concurrency(
                         // 给结果赋值
                         {
                             let mut api_res = api_result_arc.lock().await;
-                            api_res.response_time_95 =
-                                *api_histogram.percentile(95.0)?.range().start();
-                            api_res.response_time_99 =
-                                *api_histogram.percentile(99.0)?.range().start();
-                            api_res.median_response_time =
-                                *api_histogram.percentile(50.0)?.range().start();
+                            api_res.response_time_95 = match api_histogram.percentile(95.0) {
+                                Ok(b) => *b.range().start(),
+                                Err(e) => {
+                                    return Err(Error::msg(format!(
+                                        "获取95线失败::{:?}",
+                                        e.to_string()
+                                    )));
+                                }
+                            };
+                            api_res.response_time_99 = match api_histogram.percentile(99.0) {
+                                Ok(b) => *b.range().start(),
+                                Err(e) => {
+                                    return Err(Error::msg(format!(
+                                        "获取99线失败::{:?}",
+                                        e.to_string()
+                                    )));
+                                }
+                            };
+                            api_res.median_response_time = match api_histogram.percentile(50.0) {
+                                Ok(b) => *b.range().start(),
+                                Err(e) => {
+                                    return Err(Error::msg(format!(
+                                        "获取50线失败::{:?}",
+                                        e.to_string()
+                                    )));
+                                }
+                            };
                             api_res.max_response_time = *api_max_rt;
                             api_res.min_response_time = *api_min_rt;
                             api_res.total_requests = api_total_requests;

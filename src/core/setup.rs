@@ -4,6 +4,7 @@ use futures::StreamExt;
 use handlebars::Handlebars;
 use jsonpath_lib::select;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, COOKIE};
+use reqwest::multipart;
 use reqwest::{Client, Method};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -18,8 +19,12 @@ pub async fn start_setup(
     extract_map.extend(extract_b_tree_map);
     for option in setup_options {
         // 构建请求方式
-        let method = Method::from_str(&option.method.to_uppercase())
-            .map_err(|_| Error::msg("构建请求方法失败"))?;
+        let method = match Method::from_str(&option.method.to_uppercase()) {
+            Ok(m) => m,
+            Err(e) => {
+                return Err(Error::msg(format!("构建请求方法失败::{:?}", e.to_string())));
+            }
+        };
         // 构建请求
         let mut request = client.request(method, option.url);
         // 构建请求头
@@ -102,6 +107,29 @@ pub async fn start_setup(
             });
             request = request.form(&form_data);
         };
+        // 构建multipart表单
+        if let Some(multipart_options) = option.multipart_options {
+            let mut multipart_form = multipart::Form::new();
+            for mo in multipart_options {
+                let file = match tokio::fs::File::open(mo.path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return Err(Error::msg(format!("打开文件失败::{:?}", e.to_string())));
+                    }
+                };
+                let part = match multipart::Part::stream(file)
+                    .file_name(mo.file_name)
+                    .mime_str(&*mo.mime)
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(Error::msg(format!("构建part失败::{:?}", e.to_string())));
+                    }
+                };
+                multipart_form = multipart_form.part(mo.form_key, part);
+            }
+            request = request.multipart(multipart_form);
+        };
         // 发送请求
         match request.send().await {
             Ok(response) => {
@@ -128,10 +156,8 @@ pub async fn start_setup(
                         // 将响应转换为json
                         let json_value: Value = match serde_json::from_slice(&*body_bytes) {
                             Err(e) => {
-                                let err_msg = match String::from_utf8(body_bytes) {
-                                    Ok(msg) => msg,
-                                    Err(e) => e.to_string(),
-                                };
+                                let err_msg =
+                                    String::from_utf8(body_bytes).unwrap_or_else(|e| e.to_string());
                                 return Err(Error::msg(format!(
                                     "转换json失败:{:?}, 原始json: {:?}",
                                     e, err_msg
