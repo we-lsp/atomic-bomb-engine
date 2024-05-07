@@ -1,7 +1,61 @@
+use crate::core::batch;
+use crate::models;
+use crate::models::api_endpoint::ApiEndpoint;
+use crate::models::setup::SetupApiEndpoint;
+use crate::models::step_option::StepOption;
+use tokio::sync::mpsc;
+
+pub async fn run_batch(
+    test_duration_secs: u64,
+    concurrent_requests: usize,
+    timeout_secs: u64,
+    cookie_store_enable: bool,
+    verbose: bool,
+    should_prevent: bool,
+    api_endpoints: Vec<ApiEndpoint>,
+    step_option: Option<StepOption>,
+    setup_options: Option<Vec<SetupApiEndpoint>>,
+    assert_channel_buffer_size: usize,
+) -> mpsc::Receiver<models::result::BatchResult> {
+    let (sender, receiver) = mpsc::channel(1024);
+    tokio::spawn(async move {
+        let res = batch::batch(
+            sender.clone(),
+            test_duration_secs,
+            concurrent_requests,
+            timeout_secs,
+            cookie_store_enable,
+            verbose,
+            should_prevent,
+            api_endpoints,
+            step_option,
+            setup_options,
+            assert_channel_buffer_size,
+        )
+        .await;
+        match res {
+            Ok(r) => {
+                match sender.send(r).await {
+                    Ok(_) => {
+                        println!("压测结束");
+                    }
+                    Err(_) => {
+                        eprintln!("压测结束，但是发送结果失败");
+                    }
+                };
+            }
+            Err(e) => {
+                eprintln!("Error: {:?}", e.to_string());
+            }
+        }
+    });
+    receiver
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::batch::batch;
     use crate::models::api_endpoint::ApiEndpoint;
     use crate::models::assert_option::AssertOption;
     use crate::models::setup::JsonpathExtract;
@@ -11,46 +65,13 @@ mod tests {
     use serde_json::{json, Value};
 
     #[tokio::test]
-    async fn test_batch() {
+    async fn test_run_batch() {
         let mut assert_vec: Vec<AssertOption> = Vec::new();
         assert_vec.push(AssertOption {
             jsonpath: "$.code".to_string(),
             reference_object: Value::from(2000000),
         });
         let mut endpoints: Vec<ApiEndpoint> = Vec::new();
-
-        // endpoints.push(ApiEndpoint {
-        //     name: "有断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount/{{test-code}}".to_string(),
-        //     method: "GET".to_string(),
-        //     weight: 1,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: Some(assert_vec.clone()),
-        //     // think_time_option: Some(ThinkTime {
-        //     //     min_millis: 300,
-        //     //     max_millis: 500,
-        //     // }),
-        //     think_time_option: None,
-        //     setup_options: None,
-        // });
-        //
-        // endpoints.push(ApiEndpoint {
-        //     name: "无断言".to_string(),
-        //     url: "https://ooooo.run/api/short/v1/getJumpCount".to_string(),
-        //     method: "POST".to_string(),
-        //     weight: 3,
-        //     json: None,
-        //     form_data: None,
-        //     headers: None,
-        //     cookies: None,
-        //     assert_options: None,
-        //     think_time_option: None,
-        //     setup_options: None,
-        // });
-
         endpoints.push(ApiEndpoint {
             name: "test-1".to_string(),
             url: "http://127.0.0.1:8080/ran_sleep".to_string(),
@@ -86,12 +107,12 @@ mod tests {
             cookies: None,
             jsonpath_extract: Some(jsonpath_extracts),
         });
-        match batch(
+        let mut receiver = run_batch(
             10,
             5,
             10,
             true,
-            true,
+            false,
             true,
             endpoints,
             Option::from(StepOption {
@@ -100,15 +121,9 @@ mod tests {
             }),
             None,
             4096,
-        )
-        .await
-        {
-            Ok(r) => {
-                println!("{:#?}", r)
-            }
-            Err(e) => {
-                eprintln!("{:?}", e)
-            }
-        };
+        ).await;
+        while let Some(res) = receiver.recv().await {
+            println!("ticket {:?}", res)
+        }
     }
 }

@@ -12,14 +12,13 @@ use histogram::Histogram;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::Client;
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use url::Url;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::sleep_guard::SleepGuard;
-use crate::core::status_share::RESULTS_SHOULD_STOP;
 use crate::core::{listening_assert, setup, share_result, start_task};
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
@@ -29,6 +28,7 @@ use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::{InnerStepOption, StepOption};
 
 pub async fn batch(
+    result_sender: mpsc::Sender<BatchResult>,
     test_duration_secs: u64,
     concurrent_requests: usize,
     timeout_secs: u64,
@@ -90,6 +90,8 @@ pub async fn batch(
     let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
     // 总权重
     let total_weight: u32 = api_endpoints.iter().map(|e| e.weight).sum();
+    // 是否停止通道
+    let (should_stop_tx, should_stop_rx) = oneshot::channel();
     // 断言队列
     if assert_channel_buffer_size <= 0 {
         assert_channel_buffer_size = 1024
@@ -298,6 +300,8 @@ pub async fn batch(
 
     // 共享任务状态
     tokio::spawn(share_result::collect_results(
+        result_sender,
+        should_stop_rx,
         Arc::clone(&total_requests),
         Arc::clone(&successful_requests),
         Arc::clone(&histogram),
@@ -377,26 +381,20 @@ pub async fn batch(
         total_duration,
         success_rate,
         error_rate,
-        median_response_time: match histogram.percentile(50.0){
-            Ok(b) => {
-                *b.range().start()
-            }
+        median_response_time: match histogram.percentile(50.0) {
+            Ok(b) => *b.range().start(),
             Err(e) => {
                 return Err(Error::msg(format!("获取50线失败::{:?}", e.to_string())));
             }
         },
-        response_time_95: match histogram.percentile(95.0){
-            Ok(b) => {
-                *b.range().start()
-            }
+        response_time_95: match histogram.percentile(95.0) {
+            Ok(b) => *b.range().start(),
             Err(e) => {
                 return Err(Error::msg(format!("获取95线失败::{:?}", e.to_string())));
             }
         },
         response_time_99: match histogram.percentile(99.0) {
-            Ok(b) => {
-                *b.range().start()
-            }
+            Ok(b) => *b.range().start(),
             Err(e) => {
                 return Err(Error::msg(format!("获取99线失败::{:?}", e.to_string())));
             }
@@ -415,8 +413,7 @@ pub async fn batch(
         api_results: api_results.to_vec().clone(),
         errors_per_second,
     });
-    let mut should_stop = RESULTS_SHOULD_STOP.lock().await;
-    *should_stop = true;
+    should_stop_tx.send(()).unwrap();
     eprintln!("测试完成！");
     result
 }
