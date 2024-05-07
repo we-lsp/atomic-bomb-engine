@@ -28,7 +28,7 @@ use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::{InnerStepOption, StepOption};
 
 pub async fn batch(
-    result_sender: mpsc::Sender<BatchResult>,
+    result_sender: mpsc::Sender<Option<BatchResult>>,
     test_duration_secs: u64,
     concurrent_requests: usize,
     timeout_secs: u64,

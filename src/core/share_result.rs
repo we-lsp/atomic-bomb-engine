@@ -13,7 +13,7 @@ use tokio::time::interval;
 use url::Url;
 
 pub(crate) async fn collect_results(
-    result_channel: Sender<BatchResult>,
+    result_channel: Sender<Option<BatchResult>>,
     should_stop_rx: Receiver<()>,
     total_requests: Arc<AtomicUsize>,
     successful_requests: Arc<AtomicUsize>,
@@ -122,7 +122,7 @@ pub(crate) async fn collect_results(
                 if verbose {
                 println!("{:?}-{:#?}", elapsed.as_millis(), result.clone());
                 };
-                let _ = result_channel.send(result).await;
+                let _ = result_channel.send(Some(result)).await;
             }
         } => {
             eprintln!("推送意外停止")

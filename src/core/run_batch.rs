@@ -16,7 +16,7 @@ pub async fn run_batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     assert_channel_buffer_size: usize,
-) -> mpsc::Receiver<models::result::BatchResult> {
+) -> mpsc::Receiver<Option<models::result::BatchResult>> {
     let (sender, receiver) = mpsc::channel(1024);
     tokio::spawn(async move {
         let res = batch::batch(
@@ -35,12 +35,20 @@ pub async fn run_batch(
         .await;
         match res {
             Ok(r) => {
-                match sender.send(r).await {
+                match sender.send(Some(r)).await {
                     Ok(_) => {
                         println!("压测结束");
                     }
                     Err(_) => {
                         eprintln!("压测结束，但是发送结果失败");
+                    }
+                };
+                match sender.send(None).await {
+                    Ok(_) => {
+                        println!("发送结束信号");
+                    }
+                    Err(_) => {
+                        eprintln!("发送结束信号失败");
                     }
                 };
             }
