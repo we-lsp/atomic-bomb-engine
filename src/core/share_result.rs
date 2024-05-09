@@ -122,7 +122,7 @@ pub(crate) async fn collect_results(
                 if verbose {
                 println!("{:?}-{:#?}", elapsed.as_millis(), result.clone());
                 };
-                let _ = result_channel.send(Some(result));
+                let _ = result_channel.send(Some(result)).await;
             }
         } => {
             eprintln!("推送意外停止")

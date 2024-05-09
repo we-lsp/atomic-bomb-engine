@@ -5,8 +5,10 @@ use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::result::BatchResult;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::StepOption;
+use futures::stream::{self, StreamExt, TryStreamExt};
 
-pub async fn run_batch(
+
+async fn run_batch(
     test_duration_secs: u64,
     concurrent_requests: usize,
     timeout_secs: u64,
@@ -17,8 +19,9 @@ pub async fn run_batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     assert_channel_buffer_size: usize,
-) -> mpsc::Receiver<Option<BatchResult>> {
+) -> impl futures::Stream<Item = Result<Option<BatchResult>, anyhow::Error>> {
     let (sender, receiver) = mpsc::channel(1024);
+
     tokio::spawn(async move {
         let res = batch::batch(
             sender.clone(),
@@ -33,32 +36,28 @@ pub async fn run_batch(
             setup_options,
             assert_channel_buffer_size,
         )
-        .await;
+            .await;
         match res {
             Ok(r) => {
-                match sender.send(Some(r)).await {
-                    Ok(_) => {
-                        println!("压测结束");
-                    }
-                    Err(_) => {
-                        eprintln!("压测结束，但是发送结果失败");
-                    }
-                };
-                match sender.send(None).await {
-                    Ok(_) => {
-                        println!("发送结束信号");
-                    }
-                    Err(_) => {
-                        eprintln!("发送结束信号失败");
-                    }
-                };
+                if let Err(_) = sender.send(Some(r)).await {
+                    eprintln!("压测结束，但是发送结果失败");
+                }
+                if let Err(_) = sender.send(None).await {
+                    eprintln!("发送结束信号失败");
+                }
             }
             Err(e) => {
                 eprintln!("Error: {:?}", e.to_string());
             }
         }
     });
-    receiver
+
+    stream::unfold(receiver, |mut receiver| async {
+        match receiver.recv().await {
+            Some(message) => Some((Ok(message), receiver)),
+            None => None,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -120,53 +119,33 @@ mod tests {
             jsonpath_extract: Some(jsonpath_extracts),
         });
 
-        let (tx, _rx) = mpsc::channel(1024);
-        let tx_clone = tx.clone();
-        let mut rx = tx.subscribe();
-        tokio::spawn(async move {
-            let res = batch::batch(
-                tx_clone,
-                10,
-                5,
-                10,
-                true,
-                false,
-                true,
-                endpoints,
-                Option::from(StepOption {
-                    increase_step: 1,
-                    increase_interval: 2,
-                }),
-                None,
-                4096,
-            )
-            .await;
-            match res {
-                Ok(r) => {
-                    match tx.send(Some(r)) {
-                        Ok(_) => {
-                            println!("压测结束");
-                        }
-                        Err(_) => {
-                            eprintln!("压测结束，但是发送结果失败");
-                        }
-                    };
-                    match tx.send(None) {
-                        Ok(_) => {
-                            println!("发送结束信号");
-                        }
-                        Err(_) => {
-                            eprintln!("发送结束信号失败");
-                        }
-                    };
-                }
+        let batch_stream = run_batch(
+            10,
+            5,
+            10,
+            true,
+            false,
+            true,
+            endpoints,
+            Option::from(StepOption {
+                increase_step: 1,
+                increase_interval: 2,
+            }),
+            None,
+            4096,
+        ).await;
+        batch_stream.for_each(|message_result| async {
+            match message_result {
+                Ok(Some(result)) => {
+                    println!("Received result: {:?}", result);
+                },
+                Ok(None) => {
+                    println!("Batch process completed.");
+                },
                 Err(e) => {
-                    eprintln!("Error: {:?}", e.to_string());
+                    eprintln!("Error received: {:?}", e);
                 }
             }
-        });
-        while let Ok(Some(res)) = rx.recv().await {
-            println!("{:?}", res)
-        }
+        }).await;
     }
 }
