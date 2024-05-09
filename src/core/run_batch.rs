@@ -1,3 +1,5 @@
+use std::pin::Pin;
+use futures::Stream;
 use tokio::sync::mpsc;
 
 use crate::core::batch;
@@ -19,7 +21,7 @@ async fn run_batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     assert_channel_buffer_size: usize,
-) -> impl futures::Stream<Item = Result<Option<BatchResult>, anyhow::Error>> {
+) -> Pin<Box<dyn Stream<Item = Result<Option<BatchResult>, anyhow::Error>>>> {
     let (sender, receiver) = mpsc::channel(1024);
 
     tokio::spawn(async move {
@@ -52,17 +54,21 @@ async fn run_batch(
         }
     });
 
-    stream::unfold(receiver, |mut receiver| async {
+    let stream = stream::unfold(receiver, |mut receiver| async move {
         match receiver.recv().await {
-            Some(message) => Some((Ok(message), receiver)),
+            Some(Some(batch_result)) => Some((Ok(Some(batch_result)), receiver)),
+            Some(None) => Some((Ok(None), receiver)),
             None => None,
         }
-    })
+    });
+
+    Box::pin(stream)
 }
 
 #[cfg(test)]
 mod tests {
     use core::option::Option;
+    use futures::pin_mut;
 
     use crate::core::batch::batch;
     use serde_json::{json, Value};
@@ -119,7 +125,7 @@ mod tests {
             jsonpath_extract: Some(jsonpath_extracts),
         });
 
-        let batch_stream = run_batch(
+        let mut batch_stream = run_batch(
             10,
             5,
             10,
@@ -134,18 +140,22 @@ mod tests {
             None,
             4096,
         ).await;
-        batch_stream.for_each(|message_result| async {
-            match message_result {
-                Ok(Some(result)) => {
-                    println!("Received result: {:?}", result);
-                },
-                Ok(None) => {
-                    println!("Batch process completed.");
-                },
-                Err(e) => {
-                    eprintln!("Error received: {:?}", e);
+        loop{
+            if let Some(result) = batch_stream.next().await {
+                match result {
+                    Ok(Some(batch_result)) => {
+                        println!("Received batch result: {:?}", batch_result);
+                    },
+                    Ok(None) => {
+                        println!("No more results.");
+                        break;
+                    },
+                    Err(e) => {
+                        println!("Error: {:?}", e);
+                    }
                 }
             }
-        }).await;
+        };
+
     }
 }
