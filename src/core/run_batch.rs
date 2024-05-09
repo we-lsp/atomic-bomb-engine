@@ -1,10 +1,10 @@
+use tokio::sync::mpsc;
+
 use crate::core::batch;
-use crate::models;
 use crate::models::api_endpoint::ApiEndpoint;
+use crate::models::result::BatchResult;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::StepOption;
-use tokio::sync::{broadcast, mpsc};
-use crate::models::result::BatchResult;
 
 pub async fn run_batch(
     test_duration_secs: u64,
@@ -17,8 +17,8 @@ pub async fn run_batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     assert_channel_buffer_size: usize,
-) -> broadcast::Receiver<Option<BatchResult>> {
-    let (sender, receiver) = broadcast::channel(1024);
+) -> mpsc::Receiver<Option<BatchResult>> {
+    let (sender, receiver) = mpsc::channel(1024);
     tokio::spawn(async move {
         let res = batch::batch(
             sender.clone(),
@@ -36,7 +36,7 @@ pub async fn run_batch(
         .await;
         match res {
             Ok(r) => {
-                match sender.send(Some(r)) {
+                match sender.send(Some(r)).await {
                     Ok(_) => {
                         println!("压测结束");
                     }
@@ -44,7 +44,7 @@ pub async fn run_batch(
                         eprintln!("压测结束，但是发送结果失败");
                     }
                 };
-                match sender.send(None) {
+                match sender.send(None).await {
                     Ok(_) => {
                         println!("发送结束信号");
                     }
@@ -61,17 +61,20 @@ pub async fn run_batch(
     receiver
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use core::option::Option;
+
+    use crate::core::batch::batch;
+    use serde_json::{json, Value};
+
     use crate::models::api_endpoint::ApiEndpoint;
     use crate::models::assert_option::AssertOption;
     use crate::models::setup::JsonpathExtract;
     use crate::models::setup::SetupApiEndpoint;
     use crate::models::step_option::StepOption;
-    use core::option::Option;
-    use serde_json::{json, Value};
+
+    use super::*;
 
     #[tokio::test]
     async fn test_run_batch() {
@@ -116,22 +119,53 @@ mod tests {
             cookies: None,
             jsonpath_extract: Some(jsonpath_extracts),
         });
-        let mut receiver = run_batch(
-            10,
-            5,
-            10,
-            true,
-            false,
-            true,
-            endpoints,
-            Option::from(StepOption {
-                increase_step: 1,
-                increase_interval: 2,
-            }),
-            None,
-            4096,
-        ).await;
-        while let Ok(Some(res)) = receiver.recv().await {
+
+        let (tx, _rx) = mpsc::channel(1024);
+        let tx_clone = tx.clone();
+        let mut rx = tx.subscribe();
+        tokio::spawn(async move {
+            let res = batch::batch(
+                tx_clone,
+                10,
+                5,
+                10,
+                true,
+                false,
+                true,
+                endpoints,
+                Option::from(StepOption {
+                    increase_step: 1,
+                    increase_interval: 2,
+                }),
+                None,
+                4096,
+            )
+            .await;
+            match res {
+                Ok(r) => {
+                    match tx.send(Some(r)) {
+                        Ok(_) => {
+                            println!("压测结束");
+                        }
+                        Err(_) => {
+                            eprintln!("压测结束，但是发送结果失败");
+                        }
+                    };
+                    match tx.send(None) {
+                        Ok(_) => {
+                            println!("发送结束信号");
+                        }
+                        Err(_) => {
+                            eprintln!("发送结束信号失败");
+                        }
+                    };
+                }
+                Err(e) => {
+                    eprintln!("Error: {:?}", e.to_string());
+                }
+            }
+        });
+        while let Ok(Some(res)) = rx.recv().await {
             println!("{:?}", res)
         }
     }
