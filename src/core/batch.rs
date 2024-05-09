@@ -12,7 +12,7 @@ use histogram::Histogram;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::Client;
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex, broadcast};
 use tokio::task::JoinHandle;
 use url::Url;
 
@@ -28,7 +28,7 @@ use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::{InnerStepOption, StepOption};
 
 pub async fn batch(
-    result_sender: mpsc::Sender<Option<BatchResult>>,
+    result_sender: broadcast::Sender<Option<BatchResult>>,
     test_duration_secs: u64,
     concurrent_requests: usize,
     timeout_secs: u64,

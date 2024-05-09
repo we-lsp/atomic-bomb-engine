@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::select;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::broadcast::Sender;
 use tokio::sync::oneshot::Receiver;
 use tokio::sync::Mutex;
 use tokio::time::interval;
@@ -122,7 +122,7 @@ pub(crate) async fn collect_results(
                 if verbose {
                 println!("{:?}-{:#?}", elapsed.as_millis(), result.clone());
                 };
-                let _ = result_channel.send(Some(result)).await;
+                let _ = result_channel.send(Some(result));
             }
         } => {
             eprintln!("推送意外停止")

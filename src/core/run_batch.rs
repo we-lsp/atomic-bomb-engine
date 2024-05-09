@@ -3,7 +3,8 @@ use crate::models;
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::StepOption;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
+use crate::models::result::BatchResult;
 
 pub async fn run_batch(
     test_duration_secs: u64,
@@ -16,8 +17,8 @@ pub async fn run_batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     assert_channel_buffer_size: usize,
-) -> mpsc::Receiver<Option<models::result::BatchResult>> {
-    let (sender, receiver) = mpsc::channel(1024);
+) -> broadcast::Receiver<Option<BatchResult>> {
+    let (sender, receiver) = broadcast::channel(1024);
     tokio::spawn(async move {
         let res = batch::batch(
             sender.clone(),
@@ -35,7 +36,7 @@ pub async fn run_batch(
         .await;
         match res {
             Ok(r) => {
-                match sender.send(Some(r)).await {
+                match sender.send(Some(r)) {
                     Ok(_) => {
                         println!("压测结束");
                     }
@@ -43,7 +44,7 @@ pub async fn run_batch(
                         eprintln!("压测结束，但是发送结果失败");
                     }
                 };
-                match sender.send(None).await {
+                match sender.send(None) {
                     Ok(_) => {
                         println!("发送结束信号");
                     }
@@ -130,8 +131,8 @@ mod tests {
             None,
             4096,
         ).await;
-        while let Some(res) = receiver.recv().await {
-            println!("ticket {:?}", res)
+        while let Ok(Some(res)) = receiver.recv().await {
+            println!("{:?}", res)
         }
     }
 }
