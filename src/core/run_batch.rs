@@ -10,7 +10,7 @@ use crate::models::step_option::StepOption;
 use futures::stream::{self, StreamExt, TryStreamExt};
 
 
-async fn run_batch(
+pub async fn run_batch(
     test_duration_secs: u64,
     concurrent_requests: usize,
     timeout_secs: u64,
