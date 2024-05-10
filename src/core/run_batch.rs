@@ -1,4 +1,3 @@
-use std::pin::Pin;
 use futures::Stream;
 use tokio::sync::mpsc;
 
@@ -7,7 +6,7 @@ use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::result::BatchResult;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::StepOption;
-use futures::stream::{self, StreamExt, TryStreamExt};
+use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 
 
 pub async fn run_batch(
@@ -21,7 +20,7 @@ pub async fn run_batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     assert_channel_buffer_size: usize,
-) -> Pin<Box<dyn Stream<Item = Result<Option<BatchResult>, anyhow::Error>>>> {
+) -> BoxStream<'static, Result<Option<BatchResult>, anyhow::Error>> {
     let (sender, receiver) = mpsc::channel(1024);
 
     tokio::spawn(async move {
@@ -54,7 +53,7 @@ pub async fn run_batch(
         }
     });
 
-    let stream = stream::unfold(receiver, |mut receiver| async move {
+    let stream = futures::stream::unfold(receiver, |mut receiver| async move {
         match receiver.recv().await {
             Some(Some(batch_result)) => Some((Ok(Some(batch_result)), receiver)),
             Some(None) => Some((Ok(None), receiver)),
@@ -62,7 +61,7 @@ pub async fn run_batch(
         }
     });
 
-    Box::pin(stream)
+    stream.boxed()
 }
 
 #[cfg(test)]
