@@ -1,4 +1,3 @@
-use futures::Stream;
 use tokio::sync::mpsc;
 
 use crate::core::batch;
@@ -6,8 +5,7 @@ use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::result::BatchResult;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::StepOption;
-use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
-
+use futures::stream::{BoxStream, StreamExt};
 
 pub async fn run_batch(
     test_duration_secs: u64,
@@ -37,7 +35,7 @@ pub async fn run_batch(
             setup_options,
             assert_channel_buffer_size,
         )
-            .await;
+        .await;
         match res {
             Ok(r) => {
                 if let Err(_) = sender.send(Some(r)).await {
@@ -138,23 +136,23 @@ mod tests {
             }),
             None,
             4096,
-        ).await;
-        loop{
+        )
+        .await;
+        loop {
             if let Some(result) = batch_stream.next().await {
                 match result {
                     Ok(Some(batch_result)) => {
                         println!("Received batch result: {:?}", batch_result);
-                    },
+                    }
                     Ok(None) => {
                         println!("No more results.");
                         break;
-                    },
+                    }
                     Err(e) => {
                         println!("Error: {:?}", e);
                     }
                 }
             }
-        };
-
+        }
     }
 }
