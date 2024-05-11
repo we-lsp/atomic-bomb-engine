@@ -65,9 +65,6 @@ pub async fn run_batch(
 #[cfg(test)]
 mod tests {
     use core::option::Option;
-    use futures::pin_mut;
-
-    use crate::core::batch::batch;
     use serde_json::{json, Value};
 
     use crate::models::api_endpoint::ApiEndpoint;
@@ -123,7 +120,7 @@ mod tests {
         });
 
         let mut batch_stream = run_batch(
-            10,
+            30,
             5,
             10,
             true,

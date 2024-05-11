@@ -78,6 +78,9 @@ pub async fn batch(
     let err_count = Arc::new(AtomicUsize::new(0));
     // 统计每秒错误数
     let number_of_last_errors = Arc::new(AtomicUsize::new(0));
+    let dura = Arc::new(Mutex::new(0f64));
+    // 统计rps
+    let number_of_last_requests = Arc::new(AtomicUsize::new(0));
     // 已开始并发数
     let concurrent_number = Arc::new(AtomicUsize::new(0));
     // 接口线程池
@@ -313,6 +316,8 @@ pub async fn batch(
         Arc::clone(&assert_errors),
         Arc::clone(&results_arc),
         Arc::clone(&concurrent_number),
+        Arc::clone(&dura),
+        Arc::clone(&number_of_last_requests),
         Arc::clone(&number_of_last_errors),
         verbose,
         test_start,
@@ -376,6 +381,13 @@ pub async fn batch(
     let errors_per_second = err_count - number_of_last_errors.load(Ordering::SeqCst);
     // 将增量累加到上一次错误数量
     number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
+
+    let d = dura.lock().await;
+    let this_duration = total_duration - *d;
+    // 将请求数量减去上一次请求数量得出增量
+    let rps = (total_requests as f64 - number_of_last_requests.load(Ordering::SeqCst) as f64) / this_duration;
+    // 将增量累加
+    number_of_last_requests.fetch_add(rps as usize, Ordering::Relaxed);
     // 最终结果
     let result = Ok(BatchResult {
         total_duration,
@@ -400,7 +412,7 @@ pub async fn batch(
             }
         },
         total_requests,
-        rps: total_requests as f64 / total_duration,
+        rps,
         max_response_time: *max_response_time.lock().await,
         min_response_time: *min_response_time.lock().await,
         err_count: err_count_clone.load(Ordering::SeqCst) as i32,
