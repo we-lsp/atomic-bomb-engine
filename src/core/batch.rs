@@ -83,7 +83,23 @@ pub async fn batch(
     // 统计rps
     let number_of_last_requests = Arc::new(AtomicUsize::new(0));
     // rps队列
-    let rps_queue_arc = Arc::new(Mutex::new(fixed_size_queue::FixedSizeQueue::new(10)));
+    // 计算队列长度
+    let queue_cap = match step_option.clone() {
+        // 没有阶梯加压，队列长度为10
+        None => {
+            10usize
+        }
+        // 有阶梯加压，计算出最大并发持续时间，变为队列长度
+        Some(step_option) => {
+            // 计算最大并发量所需时间
+            let steps_to_max_concurrency = concurrent_requests / step_option.increase_step;
+            let time_to_max_concurrency = steps_to_max_concurrency as u64 * step_option.increase_interval;
+            // 计算最大并发量剩余时间
+            let remaining_time = test_duration_secs.saturating_sub(time_to_max_concurrency);
+            remaining_time as usize
+        }
+    };
+    let rps_queue_arc = Arc::new(Mutex::new(fixed_size_queue::FixedSizeQueue::new(queue_cap)));
     // 已开始并发数
     let concurrent_number = Arc::new(AtomicUsize::new(0));
     // 接口线程池
