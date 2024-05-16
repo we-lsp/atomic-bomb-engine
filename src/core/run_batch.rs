@@ -35,7 +35,7 @@ pub async fn run_batch(
             setup_options,
             assert_channel_buffer_size,
         )
-            .await;
+        .await;
 
         match res {
             Ok(r) => {
@@ -135,7 +135,7 @@ mod tests {
             None,
             4096,
         )
-            .await;
+        .await;
 
         while let Some(result) = batch_stream.next().await {
             match result {

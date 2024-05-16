@@ -18,6 +18,7 @@ use url::Url;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
+use crate::core::fixed_size_queue;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::{listening_assert, setup, share_result, start_task};
 use crate::models::api_endpoint::ApiEndpoint;
@@ -81,6 +82,8 @@ pub async fn batch(
     let dura = Arc::new(Mutex::new(0f64));
     // 统计rps
     let number_of_last_requests = Arc::new(AtomicUsize::new(0));
+    // rps队列
+    let rps_queue_arc = Arc::new(Mutex::new(fixed_size_queue::FixedSizeQueue::new(10)));
     // 已开始并发数
     let concurrent_number = Arc::new(AtomicUsize::new(0));
     // 接口线程池
@@ -288,7 +291,7 @@ pub async fn batch(
                     Arc::clone(&assert_errors),           // 断言错误统计
                     Arc::clone(&api_successful_requests), // api成功数量
                     Arc::clone(&api_result),              // 接口详细统计
-                    Arc::clone(&results_arc),             // 最终想起结果
+                    Arc::clone(&results_arc),             // 最终响应结果
                     tx_assert.clone(),                    // 断言通道
                     test_start,                           // 测试开始时间
                     test_end,                             // 测试结束时间
@@ -319,6 +322,7 @@ pub async fn batch(
         Arc::clone(&dura),
         Arc::clone(&number_of_last_requests),
         Arc::clone(&number_of_last_errors),
+        Arc::clone(&rps_queue_arc),
         verbose,
         test_start,
     ));
@@ -381,11 +385,10 @@ pub async fn batch(
     let errors_per_second = err_count - number_of_last_errors.load(Ordering::SeqCst);
     // 将增量累加到上一次错误数量
     number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
-
-    let latest_duration = dura.lock().await;
-    let this_duration = total_duration - *latest_duration;
-    // 将请求数量减去上一次请求数量得出增量
-    let rps = (total_requests as f64 - number_of_last_requests.load(Ordering::SeqCst) as f64) / this_duration;
+    let rps = match rps_queue_arc.lock().await.average().await{
+        None => {0f64}
+        Some(r) => {r}
+    };
     // 将增量累加
     number_of_last_requests.fetch_add(rps as usize, Ordering::Relaxed);
     // 最终结果

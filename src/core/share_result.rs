@@ -11,6 +11,7 @@ use tokio::sync::oneshot::Receiver;
 use tokio::sync::Mutex;
 use tokio::time::interval;
 use url::Url;
+use crate::core::fixed_size_queue;
 
 pub(crate) async fn collect_results(
     result_channel: Sender<Option<BatchResult>>,
@@ -29,6 +30,7 @@ pub(crate) async fn collect_results(
     dura: Arc<Mutex<f64>>,
     number_of_last_requests: Arc<AtomicUsize>,
     number_of_last_errors: Arc<AtomicUsize>,
+    rps_queue: Arc<Mutex<fixed_size_queue::FixedSizeQueue<f64>>>,
     verbose: bool,
     test_start: Instant,
 ) {
@@ -104,6 +106,9 @@ pub(crate) async fn collect_results(
                 let requests_per_second = total_requests as usize - number_of_last_requests.load(Ordering::SeqCst);
                 // 将增量累加
                 number_of_last_requests.fetch_add(requests_per_second, Ordering::Relaxed);
+                let rps = requests_per_second as f64 / this_duration;
+                let mut rps_queue = rps_queue.lock().await;
+                rps_queue.push(rps).await;
                 // 共享队列
                 let result = BatchResult {
                 total_duration,
@@ -113,7 +118,7 @@ pub(crate) async fn collect_results(
                 response_time_95: resp_95_line,
                 response_time_99: resp_99_line,
                 total_requests: total_requests as u64,
-                rps: requests_per_second as f64 / this_duration,
+                rps,
                 max_response_time: max_response_time_c,
                 min_response_time: min_response_time_c,
                 err_count,
