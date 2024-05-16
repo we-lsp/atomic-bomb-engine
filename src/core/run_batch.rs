@@ -36,6 +36,7 @@ pub async fn run_batch(
             assert_channel_buffer_size,
         )
         .await;
+
         match res {
             Ok(r) => {
                 if let Err(_) = sender.send(Some(r)).await {
@@ -65,9 +66,6 @@ pub async fn run_batch(
 #[cfg(test)]
 mod tests {
     use core::option::Option;
-    use futures::pin_mut;
-
-    use crate::core::batch::batch;
     use serde_json::{json, Value};
 
     use crate::models::api_endpoint::ApiEndpoint;
@@ -123,7 +121,7 @@ mod tests {
         });
 
         let mut batch_stream = run_batch(
-            10,
+            30,
             5,
             10,
             true,
@@ -138,19 +136,18 @@ mod tests {
             4096,
         )
         .await;
-        loop {
-            if let Some(result) = batch_stream.next().await {
-                match result {
-                    Ok(Some(batch_result)) => {
-                        println!("Received batch result: {:?}", batch_result);
-                    }
-                    Ok(None) => {
-                        println!("No more results.");
-                        break;
-                    }
-                    Err(e) => {
-                        println!("Error: {:?}", e);
-                    }
+
+        while let Some(result) = batch_stream.next().await {
+            match result {
+                Ok(Some(batch_result)) => {
+                    println!("Received batch result: {:?}", batch_result);
+                }
+                Ok(None) => {
+                    println!("No more results.");
+                    break;
+                }
+                Err(e) => {
+                    println!("Error: {:?}", e);
                 }
             }
         }

@@ -1,7 +1,9 @@
+use crate::core::fixed_size_queue;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use histogram::Histogram;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -26,11 +28,18 @@ pub(crate) async fn collect_results(
     assert_error: Arc<Mutex<AssertErrorStats>>,
     api_results: Arc<Mutex<Vec<ApiResult>>>,
     concurrent_number: Arc<AtomicUsize>,
+    dura: Arc<Mutex<f64>>,
+    number_of_last_requests: Arc<AtomicUsize>,
     number_of_last_errors: Arc<AtomicUsize>,
+    rps_queue: Arc<Mutex<fixed_size_queue::FixedSizeQueue<f64>>>,
+    api_rps_queue_arc: Arc<Mutex<BTreeMap<String, fixed_size_queue::FixedSizeQueue<f64>>>>,
+    queue_cap: usize,
     verbose: bool,
     test_start: Instant,
 ) {
+    let mut api_res_number_map: HashMap<String, usize> = HashMap::new();
     let mut interval = interval(Duration::from_secs(1));
+    let mut api_rps_queue_map = api_rps_queue_arc.lock().await.clone();
     select! {
         // 收到停止信号
         _ = should_stop_rx => {
@@ -45,6 +54,9 @@ pub(crate) async fn collect_results(
                 let max_response_time_c = *max_resp_time.lock().await;
                 let min_response_time_c = *min_resp_time.lock().await;
                 let total_duration = (Instant::now() - test_start).as_secs_f64();
+                let mut d = dura.lock().await;
+                let this_duration = total_duration - *d;
+                *d = total_duration;
                 let total_requests = total_requests.load(Ordering::SeqCst) as f64;
                 let successful_requests = successful_requests.load(Ordering::SeqCst) as f64;
                 let success_rate = match total_requests == 0f64 {
@@ -60,7 +72,6 @@ pub(crate) async fn collect_results(
                 let throughput_kb_s = total_response_size_kb / total_duration;
                 let http_errors = http_errors.lock().await.errors.clone();
                 let assert_errors = assert_error.lock().await.errors.clone();
-                let rps = total_requests / total_duration;
                 let resp_median_line = match histogram.percentile(50.0) {
                 Ok(bucket) => *bucket.range().start(),
                 Err(_) => 0,
@@ -81,7 +92,29 @@ pub(crate) async fn collect_results(
                 // 计算每个接口的rps,host, path
                 for (index, res) in api_results.clone().into_iter().enumerate() {
                 // 计算每个接口的rps
-                let rps = res.total_requests as f64 / total_duration;
+                    let api_latest_request_number = match api_res_number_map.get_mut(&res.name){
+                        None => {
+                            0
+                        }
+                        Some(v) => *{
+                            v
+                        }
+                    };
+                    let api_requests_per_second = res.total_requests as usize - api_latest_request_number;
+                    api_res_number_map.insert(res.name.clone(), api_requests_per_second + api_latest_request_number);
+                let rps = api_requests_per_second as f64 / this_duration;
+                    // 队列中加入rps
+                    match api_rps_queue_map.get_mut(&res.name){
+                        None => {
+                            api_rps_queue_map.insert(res.name.clone(), fixed_size_queue::FixedSizeQueue::new(queue_cap));
+                            if let Some(queue) = api_rps_queue_map.get_mut(&res.name){
+                                queue.push(rps).await
+                            };
+                        }
+                        Some(queue) => {
+                            queue.push(rps).await
+                        }
+                    }
                 api_results[index].rps = rps;
                 // 计算每个接口的HOST，PATH
                 if let Ok(url) = Url::parse(&*res.url) {
@@ -96,6 +129,13 @@ pub(crate) async fn collect_results(
                 let errors_per_second = err_count as usize - number_of_last_errors.load(Ordering::SeqCst);
                 // 将增量累加到上一次错误数量
                 number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
+                // 将请求数量减去上一次请求数量得出增量
+                let requests_per_second = total_requests as usize - number_of_last_requests.load(Ordering::SeqCst);
+                // 将增量累加
+                number_of_last_requests.fetch_add(requests_per_second, Ordering::Relaxed);
+                let rps = requests_per_second as f64 / this_duration;
+                let mut rps_queue = rps_queue.lock().await;
+                rps_queue.push(rps).await;
                 // 共享队列
                 let result = BatchResult {
                 total_duration,
