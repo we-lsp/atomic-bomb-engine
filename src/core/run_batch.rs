@@ -22,7 +22,7 @@ pub async fn run_batch(
     let (sender, receiver) = mpsc::channel(1024);
 
     tokio::spawn(async move {
-        let res = batch::batch(
+        let _res = batch::batch(
             sender.clone(),
             test_duration_secs,
             concurrent_requests,
@@ -35,20 +35,21 @@ pub async fn run_batch(
             setup_options,
             assert_channel_buffer_size,
         )
-        .await;
-        match res {
-            Ok(r) => {
-                if let Err(_) = sender.send(Some(r)).await {
-                    eprintln!("压测结束，但是发送结果失败");
-                }
-                if let Err(_) = sender.send(None).await {
-                    eprintln!("发送结束信号失败");
-                }
-            }
-            Err(e) => {
-                eprintln!("Error: {:?}", e.to_string());
-            }
-        }
+            .await;
+
+        // match res {
+        //     Ok(r) => {
+        //         if let Err(_) = sender.send(Some(r)).await {
+        //             eprintln!("压测结束，但是发送结果失败");
+        //         }
+        //         if let Err(_) = sender.send(None).await {
+        //             eprintln!("发送结束信号失败");
+        //         }
+        //     }
+        //     Err(e) => {
+        //         eprintln!("Error: {:?}", e.to_string());
+        //     }
+        // }
     });
 
     let stream = futures::stream::unfold(receiver, |mut receiver| async move {
@@ -134,20 +135,19 @@ mod tests {
             None,
             4096,
         )
-        .await;
-        loop {
-            if let Some(result) = batch_stream.next().await {
-                match result {
-                    Ok(Some(batch_result)) => {
-                        println!("Received batch result: {:?}", batch_result);
-                    }
-                    Ok(None) => {
-                        println!("No more results.");
-                        break;
-                    }
-                    Err(e) => {
-                        println!("Error: {:?}", e);
-                    }
+            .await;
+
+        while let Some(result) = batch_stream.next().await {
+            match result {
+                Ok(Some(batch_result)) => {
+                    println!("Received batch result: {:?}", batch_result);
+                }
+                Ok(None) => {
+                    println!("No more results.");
+                    break;
+                }
+                Err(e) => {
+                    println!("Error: {:?}", e);
                 }
             }
         }

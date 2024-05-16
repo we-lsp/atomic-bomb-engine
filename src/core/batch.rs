@@ -382,8 +382,8 @@ pub async fn batch(
     // 将增量累加到上一次错误数量
     number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
 
-    let d = dura.lock().await;
-    let this_duration = total_duration - *d;
+    let latest_duration = dura.lock().await;
+    let this_duration = total_duration - *latest_duration;
     // 将请求数量减去上一次请求数量得出增量
     let rps = (total_requests as f64 - number_of_last_requests.load(Ordering::SeqCst) as f64) / this_duration;
     // 将增量累加
