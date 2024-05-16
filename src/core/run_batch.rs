@@ -22,7 +22,7 @@ pub async fn run_batch(
     let (sender, receiver) = mpsc::channel(1024);
 
     tokio::spawn(async move {
-        let _res = batch::batch(
+        let res = batch::batch(
             sender.clone(),
             test_duration_secs,
             concurrent_requests,
@@ -37,19 +37,19 @@ pub async fn run_batch(
         )
             .await;
 
-        // match res {
-        //     Ok(r) => {
-        //         if let Err(_) = sender.send(Some(r)).await {
-        //             eprintln!("压测结束，但是发送结果失败");
-        //         }
-        //         if let Err(_) = sender.send(None).await {
-        //             eprintln!("发送结束信号失败");
-        //         }
-        //     }
-        //     Err(e) => {
-        //         eprintln!("Error: {:?}", e.to_string());
-        //     }
-        // }
+        match res {
+            Ok(r) => {
+                if let Err(_) = sender.send(Some(r)).await {
+                    eprintln!("压测结束，但是发送结果失败");
+                }
+                if let Err(_) = sender.send(None).await {
+                    eprintln!("发送结束信号失败");
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: {:?}", e.to_string());
+            }
+        }
     });
 
     let stream = futures::stream::unfold(receiver, |mut receiver| async move {
