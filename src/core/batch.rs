@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -21,7 +21,6 @@ use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::fixed_size_queue;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::{listening_assert, setup, share_result, start_task};
-use crate::core::fixed_size_queue::FixedSizeQueue;
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
@@ -387,22 +386,13 @@ pub async fn batch(
         Err(_) => 0,
     };
     let mut api_results = results_arc.lock().await;
-    for (index, res) in api_results.clone().into_iter().enumerate(){
-        let api_res = match api_rps_queue_arc.lock().await.clone().get(&res.name){
-            None => {
-                0f64
-            }
-            Some(v) => {
-                match v.average().await{
-                    None => {0f64}
-                    Some(v) => {
-                        v
-                    }
-                }
-            }
+    for (index, res) in api_results.clone().into_iter().enumerate() {
+        let api_res = match api_rps_queue_arc.lock().await.clone().get(&res.name) {
+            None => 0f64,
+            Some(v) => v.average().await.unwrap_or_else(|| 0f64),
         };
         api_results[index].rps = api_res;
-    };
+    }
     // 计算每个接口的rps,host, path
     for (index, res) in api_results.clone().into_iter().enumerate() {
         // 计算每个接口的rps
@@ -422,7 +412,12 @@ pub async fn batch(
     let errors_per_second = err_count - number_of_last_errors.load(Ordering::SeqCst);
     // 将增量累加到上一次错误数量
     number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
-    let rps = rps_queue_arc.lock().await.average().await.unwrap_or_else(|| 0f64);
+    let rps = rps_queue_arc
+        .lock()
+        .await
+        .average()
+        .await
+        .unwrap_or_else(|| 0f64);
     // 将增量累加
     number_of_last_requests.fetch_add(rps as usize, Ordering::Relaxed);
     // 最终结果

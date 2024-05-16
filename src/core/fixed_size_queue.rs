@@ -24,17 +24,17 @@ where
         self.queue.push_back(item);
     }
 
-    async fn len(&self) -> usize {
-        self.queue.len()
-    }
-
-    async fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
-
-    async fn pop(&mut self) -> Option<T> {
-        self.queue.pop_front()
-    }
+    // async fn len(&self) -> usize {
+    //     self.queue.len()
+    // }
+    //
+    // async fn is_empty(&self) -> bool {
+    //     self.queue.is_empty()
+    // }
+    //
+    // async fn pop(&mut self) -> Option<T> {
+    //     self.queue.pop_front()
+    // }
 
     pub(crate) async fn average(&self) -> Option<f64> {
         if self.queue.is_empty() {
