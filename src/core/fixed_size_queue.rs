@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+#[derive(Clone)]
 pub(crate) struct FixedSizeQueue<T> {
     queue: VecDeque<T>,
     capacity: usize,

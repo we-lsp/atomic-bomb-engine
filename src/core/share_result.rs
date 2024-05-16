@@ -1,7 +1,9 @@
+use crate::core::fixed_size_queue;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use histogram::Histogram;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -11,7 +13,6 @@ use tokio::sync::oneshot::Receiver;
 use tokio::sync::Mutex;
 use tokio::time::interval;
 use url::Url;
-use crate::core::fixed_size_queue;
 
 pub(crate) async fn collect_results(
     result_channel: Sender<Option<BatchResult>>,
@@ -31,10 +32,14 @@ pub(crate) async fn collect_results(
     number_of_last_requests: Arc<AtomicUsize>,
     number_of_last_errors: Arc<AtomicUsize>,
     rps_queue: Arc<Mutex<fixed_size_queue::FixedSizeQueue<f64>>>,
+    api_rps_queue_arc: Arc<Mutex<BTreeMap<String, fixed_size_queue::FixedSizeQueue<f64>>>>,
+    queue_cap: usize,
     verbose: bool,
     test_start: Instant,
 ) {
+    let mut api_res_number_map: HashMap<String, usize> = HashMap::new();
     let mut interval = interval(Duration::from_secs(1));
+    let mut api_rps_queue_map = api_rps_queue_arc.lock().await.clone();
     select! {
         // 收到停止信号
         _ = should_stop_rx => {
@@ -87,7 +92,29 @@ pub(crate) async fn collect_results(
                 // 计算每个接口的rps,host, path
                 for (index, res) in api_results.clone().into_iter().enumerate() {
                 // 计算每个接口的rps
-                let rps = res.total_requests as f64 / total_duration;
+                    let api_latest_request_number = match api_res_number_map.get_mut(&res.name){
+                        None => {
+                            0
+                        }
+                        Some(v) => *{
+                            v
+                        }
+                    };
+                    let api_requests_per_second = res.total_requests as usize - api_latest_request_number;
+                    api_res_number_map.insert(res.name.clone(), api_requests_per_second + api_latest_request_number);
+                let rps = api_requests_per_second as f64 / this_duration;
+                    // 队列中加入rps
+                    match api_rps_queue_map.get_mut(&res.name){
+                        None => {
+                            api_rps_queue_map.insert(res.name.clone(), fixed_size_queue::FixedSizeQueue::new(queue_cap));
+                            if let Some(queue) = api_rps_queue_map.get_mut(&res.name){
+                                queue.push(rps).await
+                            };
+                        }
+                        Some(queue) => {
+                            queue.push(rps).await
+                        }
+                    }
                 api_results[index].rps = rps;
                 // 计算每个接口的HOST，PATH
                 if let Ok(url) = Url::parse(&*res.url) {

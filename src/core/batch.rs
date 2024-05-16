@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -21,6 +21,7 @@ use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::fixed_size_queue;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::{listening_assert, setup, share_result, start_task};
+use crate::core::fixed_size_queue::FixedSizeQueue;
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
@@ -86,20 +87,22 @@ pub async fn batch(
     // 计算队列长度
     let queue_cap = match step_option.clone() {
         // 没有阶梯加压，队列长度为10
-        None => {
-            10usize
-        }
+        None => 10usize,
         // 有阶梯加压，计算出最大并发持续时间，变为队列长度
         Some(step_option) => {
             // 计算最大并发量所需时间
             let steps_to_max_concurrency = concurrent_requests / step_option.increase_step;
-            let time_to_max_concurrency = steps_to_max_concurrency as u64 * step_option.increase_interval;
+            let time_to_max_concurrency =
+                steps_to_max_concurrency as u64 * step_option.increase_interval;
             // 计算最大并发量剩余时间
             let remaining_time = test_duration_secs.saturating_sub(time_to_max_concurrency);
             remaining_time as usize
         }
     };
     let rps_queue_arc = Arc::new(Mutex::new(fixed_size_queue::FixedSizeQueue::new(queue_cap)));
+    // api rps队列
+    let api_rps_queue_arc: Arc<Mutex<BTreeMap<String, fixed_size_queue::FixedSizeQueue<f64>>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
     // 已开始并发数
     let concurrent_number = Arc::new(AtomicUsize::new(0));
     // 接口线程池
@@ -339,6 +342,8 @@ pub async fn batch(
         Arc::clone(&number_of_last_requests),
         Arc::clone(&number_of_last_errors),
         Arc::clone(&rps_queue_arc),
+        Arc::clone(&api_rps_queue_arc),
+        queue_cap,
         verbose,
         test_start,
     ));
@@ -382,6 +387,22 @@ pub async fn batch(
         Err(_) => 0,
     };
     let mut api_results = results_arc.lock().await;
+    for (index, res) in api_results.clone().into_iter().enumerate(){
+        let api_res = match api_rps_queue_arc.lock().await.clone().get(&res.name){
+            None => {
+                0f64
+            }
+            Some(v) => {
+                match v.average().await{
+                    None => {0f64}
+                    Some(v) => {
+                        v
+                    }
+                }
+            }
+        };
+        api_results[index].rps = api_res;
+    };
     // 计算每个接口的rps,host, path
     for (index, res) in api_results.clone().into_iter().enumerate() {
         // 计算每个接口的rps
@@ -401,10 +422,7 @@ pub async fn batch(
     let errors_per_second = err_count - number_of_last_errors.load(Ordering::SeqCst);
     // 将增量累加到上一次错误数量
     number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
-    let rps = match rps_queue_arc.lock().await.average().await{
-        None => {0f64}
-        Some(r) => {r}
-    };
+    let rps = rps_queue_arc.lock().await.average().await.unwrap_or_else(|| 0f64);
     // 将增量累加
     number_of_last_requests.fetch_add(rps as usize, Ordering::Relaxed);
     // 最终结果
