@@ -2,6 +2,7 @@ use crate::core::fixed_size_queue;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
+use crate::core::exponential_moving_average;
 use histogram::Histogram;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -40,6 +41,8 @@ pub(crate) async fn collect_results(
     let mut api_res_number_map: HashMap<String, usize> = HashMap::new();
     let mut interval = interval(Duration::from_secs(1));
     let mut api_rps_queue_map = api_rps_queue_arc.lock().await.clone();
+    // 指数平均
+    let mut ema = exponential_moving_average::ExponentialMovingAverage::new(0.1);
     select! {
         // 收到停止信号
         _ = should_stop_rx => {
@@ -91,7 +94,7 @@ pub(crate) async fn collect_results(
                 let mut api_results = api_results.lock().await;
                 // 计算每个接口的rps,host, path
                 for (index, res) in api_results.clone().into_iter().enumerate() {
-                // 计算每个接口的rps
+                    // 计算每个接口的rps
                     let api_latest_request_number = match api_res_number_map.get_mut(&res.name){
                         None => {
                             0
@@ -102,7 +105,7 @@ pub(crate) async fn collect_results(
                     };
                     let api_requests_per_second = res.total_requests as usize - api_latest_request_number;
                     api_res_number_map.insert(res.name.clone(), api_requests_per_second + api_latest_request_number);
-                let rps = api_requests_per_second as f64 / this_duration;
+                    let rps = api_requests_per_second as f64 / this_duration;
                     // 队列中加入rps
                     match api_rps_queue_map.get_mut(&res.name){
                         None => {
@@ -133,7 +136,8 @@ pub(crate) async fn collect_results(
                 let requests_per_second = total_requests as usize - number_of_last_requests.load(Ordering::SeqCst);
                 // 将增量累加
                 number_of_last_requests.fetch_add(requests_per_second, Ordering::Relaxed);
-                let rps = requests_per_second as f64 / this_duration;
+                let mut rps = requests_per_second as f64 / this_duration;
+                rps = ema.add(rps);
                 let mut rps_queue = rps_queue.lock().await;
                 rps_queue.push(rps).await;
                 // 共享队列
