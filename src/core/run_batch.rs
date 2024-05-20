@@ -18,6 +18,7 @@ pub async fn run_batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     assert_channel_buffer_size: usize,
+    ema_alpha: f64,
 ) -> BoxStream<'static, Result<Option<BatchResult>, anyhow::Error>> {
     let (sender, receiver) = mpsc::channel(1024);
 
@@ -34,6 +35,7 @@ pub async fn run_batch(
             step_option,
             setup_options,
             assert_channel_buffer_size,
+            ema_alpha,
         )
         .await;
 
@@ -120,21 +122,10 @@ mod tests {
             jsonpath_extract: Some(jsonpath_extracts),
         });
 
-        let mut batch_stream = run_batch(
-            30,
-            5,
-            10,
-            true,
-            false,
-            true,
-            endpoints,
-            Option::from(StepOption {
-                increase_step: 1,
-                increase_interval: 2,
-            }),
-            None,
-            4096,
-        )
+        let mut batch_stream = run_batch(30, 5, 10, true, false, true, endpoints, Option::from(StepOption {
+            increase_step: 1,
+            increase_interval: 2,
+        }), None, 4096, 0f64)
         .await;
 
         while let Some(result) = batch_stream.next().await {

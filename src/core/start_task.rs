@@ -67,12 +67,12 @@ pub(crate) async fn start_concurrency(
     concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
     // 将接口并发数添加到推送结果中
     results_arc.lock().await[index].concurrent_number = api_current_concurrency;
+    // 在到达结束时间后停止发送请求
     'RETRY: while Instant::now() < test_end {
         // 设置api的提取器
         let mut api_extract_b_tree_map = BTreeMap::new();
         // 将全局字典加入到api字典
         api_extract_b_tree_map.extend(extract_map_arc.lock().await.clone());
-
         // 接口初始化副本
         let api_setup_clone = endpoint_arc.lock().await.setup_options.clone();
         // 接口前置初始化

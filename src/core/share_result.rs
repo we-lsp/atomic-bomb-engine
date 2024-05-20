@@ -1,3 +1,4 @@
+use crate::core::exponential_moving_average;
 use crate::core::fixed_size_queue;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
@@ -36,10 +37,20 @@ pub(crate) async fn collect_results(
     queue_cap: usize,
     verbose: bool,
     test_start: Instant,
+    ema_alpha: f64,
 ) {
     let mut api_res_number_map: HashMap<String, usize> = HashMap::new();
     let mut interval = interval(Duration::from_secs(1));
     let mut api_rps_queue_map = api_rps_queue_arc.lock().await.clone();
+    // 指数平均
+    let ema: Option<exponential_moving_average::ExponentialMovingAverage> = match ema_alpha > 0f64 {
+        true => {
+            Some(exponential_moving_average::ExponentialMovingAverage::new(ema_alpha))
+        }
+        false => {
+            None
+        }
+    };
     select! {
         // 收到停止信号
         _ = should_stop_rx => {
@@ -91,7 +102,7 @@ pub(crate) async fn collect_results(
                 let mut api_results = api_results.lock().await;
                 // 计算每个接口的rps,host, path
                 for (index, res) in api_results.clone().into_iter().enumerate() {
-                // 计算每个接口的rps
+                    // 计算每个接口的rps
                     let api_latest_request_number = match api_res_number_map.get_mut(&res.name){
                         None => {
                             0
@@ -102,7 +113,7 @@ pub(crate) async fn collect_results(
                     };
                     let api_requests_per_second = res.total_requests as usize - api_latest_request_number;
                     api_res_number_map.insert(res.name.clone(), api_requests_per_second + api_latest_request_number);
-                let rps = api_requests_per_second as f64 / this_duration;
+                    let mut rps = api_requests_per_second as f64 / this_duration;
                     // 队列中加入rps
                     match api_rps_queue_map.get_mut(&res.name){
                         None => {
@@ -115,14 +126,22 @@ pub(crate) async fn collect_results(
                             queue.push(rps).await
                         }
                     }
-                api_results[index].rps = rps;
-                // 计算每个接口的HOST，PATH
-                if let Ok(url) = Url::parse(&*res.url) {
-                if let Some(host) = url.host() {
-                api_results[index].host = host.to_string();
-                };
-                api_results[index].path = url.path().to_string();
-                };
+                    rps = match ema.clone(){
+                        None => {
+                            rps
+                        }
+                        Some(mut e) => {
+                            e.add(rps)
+                        }
+                    };
+                    api_results[index].rps = rps;
+                    // 计算每个接口的HOST，PATH
+                    if let Ok(url) = Url::parse(&*res.url) {
+                    if let Some(host) = url.host() {
+                    api_results[index].host = host.to_string();
+                    };
+                    api_results[index].path = url.path().to_string();
+                    };
                 }
                 let total_concurrent_number = concurrent_number.load(Ordering::SeqCst) as i32;
                 // 总错误数量减去上一次错误数量得出增量
@@ -133,7 +152,13 @@ pub(crate) async fn collect_results(
                 let requests_per_second = total_requests as usize - number_of_last_requests.load(Ordering::SeqCst);
                 // 将增量累加
                 number_of_last_requests.fetch_add(requests_per_second, Ordering::Relaxed);
-                let rps = requests_per_second as f64 / this_duration;
+                let mut rps = requests_per_second as f64 / this_duration;
+                rps = match ema.clone(){
+                    None => {rps}
+                    Some(mut e) => {
+                        e.add(rps)
+                    }
+                };
                 let mut rps_queue = rps_queue.lock().await;
                 rps_queue.push(rps).await;
                 // 共享队列
