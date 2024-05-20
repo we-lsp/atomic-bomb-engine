@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub(crate) struct ExponentialMovingAverage {
     /// 指数滑动平均
     alpha: f64,

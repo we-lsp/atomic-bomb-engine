@@ -40,6 +40,7 @@ pub async fn batch(
     step_option: Option<StepOption>,
     setup_options: Option<Vec<SetupApiEndpoint>>,
     mut assert_channel_buffer_size: usize,
+    ema_alpha: f64,
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -345,6 +346,7 @@ pub async fn batch(
         queue_cap,
         verbose,
         test_start,
+        ema_alpha,
     ));
 
     // 等待任务完成

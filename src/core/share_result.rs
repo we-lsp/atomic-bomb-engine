@@ -37,12 +37,20 @@ pub(crate) async fn collect_results(
     queue_cap: usize,
     verbose: bool,
     test_start: Instant,
+    ema_alpha: f64,
 ) {
     let mut api_res_number_map: HashMap<String, usize> = HashMap::new();
     let mut interval = interval(Duration::from_secs(1));
     let mut api_rps_queue_map = api_rps_queue_arc.lock().await.clone();
     // 指数平均
-    let mut ema = exponential_moving_average::ExponentialMovingAverage::new(0.1);
+    let ema: Option<exponential_moving_average::ExponentialMovingAverage> = match ema_alpha > 0f64 {
+        true => {
+            Some(exponential_moving_average::ExponentialMovingAverage::new(ema_alpha))
+        }
+        false => {
+            None
+        }
+    };
     select! {
         // 收到停止信号
         _ = should_stop_rx => {
@@ -118,7 +126,14 @@ pub(crate) async fn collect_results(
                             queue.push(rps).await
                         }
                     }
-                    rps = ema.add(rps);
+                    rps = match ema.clone(){
+                        None => {
+                            rps
+                        }
+                        Some(mut e) => {
+                            e.add(rps)
+                        }
+                    };
                     api_results[index].rps = rps;
                     // 计算每个接口的HOST，PATH
                     if let Ok(url) = Url::parse(&*res.url) {
@@ -138,7 +153,12 @@ pub(crate) async fn collect_results(
                 // 将增量累加
                 number_of_last_requests.fetch_add(requests_per_second, Ordering::Relaxed);
                 let mut rps = requests_per_second as f64 / this_duration;
-                rps = ema.add(rps);
+                rps = match ema.clone(){
+                    None => {rps}
+                    Some(mut e) => {
+                        e.add(rps)
+                    }
+                };
                 let mut rps_queue = rps_queue.lock().await;
                 rps_queue.push(rps).await;
                 // 共享队列
