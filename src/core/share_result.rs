@@ -1,8 +1,8 @@
+use crate::core::exponential_moving_average;
 use crate::core::fixed_size_queue;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
-use crate::core::exponential_moving_average;
 use histogram::Histogram;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -105,7 +105,7 @@ pub(crate) async fn collect_results(
                     };
                     let api_requests_per_second = res.total_requests as usize - api_latest_request_number;
                     api_res_number_map.insert(res.name.clone(), api_requests_per_second + api_latest_request_number);
-                    let rps = api_requests_per_second as f64 / this_duration;
+                    let mut rps = api_requests_per_second as f64 / this_duration;
                     // 队列中加入rps
                     match api_rps_queue_map.get_mut(&res.name){
                         None => {
@@ -118,14 +118,15 @@ pub(crate) async fn collect_results(
                             queue.push(rps).await
                         }
                     }
-                api_results[index].rps = rps;
-                // 计算每个接口的HOST，PATH
-                if let Ok(url) = Url::parse(&*res.url) {
-                if let Some(host) = url.host() {
-                api_results[index].host = host.to_string();
-                };
-                api_results[index].path = url.path().to_string();
-                };
+                    rps = ema.add(rps);
+                    api_results[index].rps = rps;
+                    // 计算每个接口的HOST，PATH
+                    if let Ok(url) = Url::parse(&*res.url) {
+                    if let Some(host) = url.host() {
+                    api_results[index].host = host.to_string();
+                    };
+                    api_results[index].path = url.path().to_string();
+                    };
                 }
                 let total_concurrent_number = concurrent_number.load(Ordering::SeqCst) as i32;
                 // 总错误数量减去上一次错误数量得出增量
