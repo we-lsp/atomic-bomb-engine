@@ -44,12 +44,10 @@ pub(crate) async fn collect_results(
     let mut api_rps_queue_map = api_rps_queue_arc.lock().await.clone();
     // 指数平均
     let ema: Option<exponential_moving_average::ExponentialMovingAverage> = match ema_alpha > 0f64 {
-        true => {
-            Some(exponential_moving_average::ExponentialMovingAverage::new(ema_alpha))
-        }
-        false => {
-            None
-        }
+        true => Some(exponential_moving_average::ExponentialMovingAverage::new(
+            ema_alpha,
+        )),
+        false => None,
     };
     select! {
         // 收到停止信号
