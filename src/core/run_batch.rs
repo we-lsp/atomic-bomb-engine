@@ -122,10 +122,22 @@ mod tests {
             jsonpath_extract: Some(jsonpath_extracts),
         });
 
-        let mut batch_stream = run_batch(30, 5, 10, true, false, true, endpoints, Option::from(StepOption {
-            increase_step: 1,
-            increase_interval: 2,
-        }), None, 4096, 0f64)
+        let mut batch_stream = run_batch(
+            30,
+            5,
+            10,
+            true,
+            false,
+            true,
+            endpoints,
+            Option::from(StepOption {
+                increase_step: 1,
+                increase_interval: 2,
+            }),
+            None,
+            4096,
+            0f64,
+        )
         .await;
 
         while let Some(result) = batch_stream.next().await {

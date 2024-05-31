@@ -678,8 +678,11 @@ pub(crate) async fn start_concurrency(
                     }
                 }
 
-                let err = dbg!(e);
-                let err_source = match err.source() {
+                if verbose {
+                    eprintln!("{:#?}", e.to_string());
+                };
+
+                let err_source = match e.source() {
                     None => "None".to_string(),
                     Some(source) => source.to_string(),
                 };
@@ -688,9 +691,9 @@ pub(crate) async fn start_concurrency(
                     .await
                     .increment(
                         endpoint_arc.lock().await.name.clone(),
-                        err.url(),
+                        e.url(),
                         status_code,
-                        err.to_string(),
+                        e.to_string(),
                         err_source,
                     )
                     .await;
